@@ -55,7 +55,7 @@ import scala.util.{Try, Success, Failure}
  *  - Implement some kind of analysis, look at examples/LambdaCalculus.scala and
  *    examples/TaintAnalysis.scala.
  */
-object Main {
+object OldMain {
   /** Run a machine on a program with the given semantics. If @param output is
     * set, generate a dot graph visualizing the computed graph in the given
     * file. Return the number of states and time taken. */

@@ -18,3 +18,5 @@ mainClass in (Compile, run) := Some("Main")
 
 addCompilerPlugin("org.psywerx.hairyfotr" %% "linter" % "0.1.17")
 scalacOptions += "-P:linter:disable:UnusedParameter"
+
+cancelable in Global := true

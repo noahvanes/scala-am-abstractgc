@@ -18,6 +18,10 @@ abstract class AbstractMachine[Exp : Expression, Abs : JoinLattice, Addr : Addre
    * The output of the abstract machine
    */
   trait Output {
+
+    import sys.process._
+    import java.io.File
+
     /**
      * Returns the set of final values that can be reached by the abstract machine.
      * Example: the Scheme program (+ 1 2) has as final values the set {3} , in the concrete case.
@@ -49,6 +53,16 @@ abstract class AbstractMachine[Exp : Expression, Abs : JoinLattice, Addr : Addre
      * Outputs the graph computed by the machine in a file, according to the given output format
      */
     def toFile(path: String)(output: GraphOutput): Unit
+
+    /**
+     * Outputs the graph computed by the machine to a viewable PNG file
+     */
+     def toPng(path: String): Unit = {
+       val tempFile = "temp.dot"
+       toFile(tempFile)(GraphDOTOutput)
+       s"dot -Tpng ${tempFile} -o ${path}".!
+       new File(tempFile).delete()
+     }
   }
 
   /**
@@ -96,7 +110,7 @@ abstract class EvalKontMachine[Exp : Expression, Abs : JoinLattice, Addr : Addre
    * evaluated in an environment
    */
   case class ControlEval(exp: Exp, env: Environment[Addr]) extends Control {
-    override def toString = s"ev(${exp})"
+    override def toString = s"${exp}"
     def subsumes(that: Control) = that match {
       case ControlEval(exp2, env2) => exp.equals(exp2) && env.subsumes(env2)
       case _ => false
@@ -107,7 +121,7 @@ abstract class EvalKontMachine[Exp : Expression, Abs : JoinLattice, Addr : Addre
    * continuation should be popped from the stack to continue the evaluation
    */
   case class ControlKont(v: Abs) extends Control {
-    override def toString = s"ko(${v})"
+    override def toString = s"${v}"
     def subsumes(that: Control) = that match {
       case ControlKont(v2) => JoinLattice[Abs].subsumes(v, v2)
       case _ => false
@@ -118,7 +132,7 @@ abstract class EvalKontMachine[Exp : Expression, Abs : JoinLattice, Addr : Addre
    * of arguments in a function call)
    */
   case class ControlError(err: SemanticError) extends Control {
-    override def toString = s"err($err)"
+    override def toString = s"${err}"
     def subsumes(that: Control) = that.equals(this)
   }
 }
