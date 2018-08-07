@@ -768,6 +768,54 @@ object SchemeUndefiner {
   }
 }
 
+object SchemeUtils {
+
+  case class SchemeFunction(pars: List[Identifier], body: List[SchemeExp], pos: Position) {
+    override def toString: String = s"<${pars.toString} => ${body.toString}>"
+  }
+
+  def extractFunctions(exp: SchemeExp): List[SchemeFunction] = exp match {
+    case SchemeLambda(args, body, pos) =>
+      SchemeFunction(args,body,pos) :: body.flatMap(extractFunctions)
+    case SchemeFuncall(f, args, pos) =>
+      extractFunctions(f) ++ args.flatMap(extractFunctions)
+    case SchemeIf(cond, cons, alt, pos) =>
+      extractFunctions(cond) ++ extractFunctions(cons) ++ extractFunctions(alt)
+    case SchemeLet(bindings, body, pos) =>
+      bindings.flatMap(bnd => extractFunctions(bnd._2)) ++ body.flatMap(extractFunctions)
+    case SchemeLetStar(bindings, body, pos) =>
+      bindings.flatMap(bnd => extractFunctions(bnd._2)) ++ body.flatMap(extractFunctions)
+    case SchemeLetrec(bindings, body, pos) =>
+      bindings.flatMap(bnd => extractFunctions(bnd._2)) ++ body.flatMap(extractFunctions)
+    case SchemeNamedLet(name, bindings, body, pos) =>
+      bindings.flatMap(bnd => extractFunctions(bnd._2)) ++ body.flatMap(extractFunctions)
+    case SchemeSet(variable, value, pos) =>
+      extractFunctions(value)
+    case SchemeBegin(body, pos) =>
+      body.flatMap(extractFunctions)
+    case SchemeCond(clauses, pos) =>
+      clauses.flatMap(cls => extractFunctions(cls._1) ++ cls._2.flatMap(extractFunctions))
+    case SchemeCase(exp, clauses, default, pos) =>
+      extractFunctions(exp) ++ clauses.flatMap(cls => cls._2.flatMap(extractFunctions)) ++ default.flatMap(extractFunctions)
+    case SchemeAnd(exps, pos) =>
+      exps.flatMap(extractFunctions)
+    case SchemeOr(exps, pos) =>
+      exps.flatMap(extractFunctions)
+    case SchemeDefineVariable(name, value, pos) =>
+      extractFunctions(value)
+    case SchemeDefineFunction(name, args, body, pos) =>
+      SchemeFunction(args,body,pos) :: body.flatMap(extractFunctions)
+    case SchemeQuoted(quoted, pos) =>
+      List()
+    case SchemeVar(id) =>
+      List()
+    case SchemeValue(v, pos) =>
+      List()
+    case _ =>
+      throw new Exception(s"Unhandled expression in extractFunctions: $exp")
+  }
+}
+
 object Scheme {
   /**
    * Compiles a s-expression into a scheme expression
@@ -788,4 +836,16 @@ object Scheme {
    * Parse a string representing a Scheme program
    */
   def parse(s: String): SchemeExp = undefine(SExpParser.parse(s).map(compile _))
+}
+
+object Main {
+
+  import Util._
+
+  def main(args: Array[String]): Unit = {
+    replOrFile(Some("test/blur.scm"), program => {
+      val prog = Scheme.parse(program)
+      SchemeUtils.extractFunctions(prog).foreach(println)
+    })
+  }
 }

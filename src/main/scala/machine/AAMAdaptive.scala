@@ -17,8 +17,17 @@
  * contains the value reached.
  */
 
-class AdaptiveAAM[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
+object AdaptiveAAM {
+
+  def apply[Exp : Expression, Abs : JoinLattice, Time : Timestamp]: AdaptiveAAM[Exp,Abs,AdaptiveAddress,Time] = {
+    implicit val allocator : Address[AdaptiveAddress] = ???
+    ???
+  }
+}
+
+abstract class AdaptiveAAM[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp] private
     extends EvalKontMachine[Exp, Abs, Addr, Time] {
+
   def name = "AdaptiveAAM"
 
   /**
