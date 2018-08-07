@@ -14,12 +14,24 @@ trait TimestampWrapper {
   val isTimestamp: Timestamp[T]
 }
 
+case object SCFA extends TimestampWrapper {
+  trait T
+  case class Time[Exp](history: Set[Exp]) extends T
+  implicit val isTimestamp = new Timestamp[T] {
+    def name = "SCFA"
+    def initial(seed: String) = Time(Set())
+    def tick(t: T) = t
+    def tick[Exp](t: T, e: Exp) = t match {
+      case (t : Time[Exp] @unchecked) => Time[Exp](t.history + e)
+    }
+  }
+}
+
 case class KCFA(k: Int) extends TimestampWrapper {
   trait T
   case class Time[Exp](seed: String, history: List[Exp]) extends T
-
   implicit val isTimestamp = new Timestamp[T] {
-    def name = "$k-CFA"
+    def name = s"$k-CFA"
     def initial(seed: String) = Time(seed, List())
     def tick(t: T) = t
     def tick[Exp](t: T, e: Exp) = t match {

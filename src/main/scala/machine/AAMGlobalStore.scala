@@ -1,10 +1,10 @@
 import scala.language.higherKinds
 
-class AAMGlobalStore[Exp : Expression, Abs : JoinLattice]
-  extends EvalKontMachine[Exp,Abs,AdaptiveAddress.A,ZeroCFA.T] {
 
-  val ctx = ZeroCFA.Time("")
-  type Addr = AdaptiveAddress.A
+class AAMGlobalStore[Exp : Expression, Abs : JoinLattice, Time : Timestamp]
+  extends EvalKontMachine[Exp,Abs,ClassicalAddress.A,Time] {
+
+  type Addr = ClassicalAddress.A
 
   def name = "AAMGlobalStore"
 
@@ -14,7 +14,7 @@ class AAMGlobalStore[Exp : Expression, Abs : JoinLattice]
 
   /* KONTINUATION ADDRESSES */
   trait KontAddr
-  case class NormalKontAddress(exp: Exp) extends KontAddr {
+  case class NormalKontAddress(exp: Exp, env: Environment[Addr]) extends KontAddr {
     override def toString = s"NormalKontAddress($exp)"
   }
   case object HaltKontAddress extends KontAddr {
@@ -25,24 +25,24 @@ class AAMGlobalStore[Exp : Expression, Abs : JoinLattice]
   }
 
   /* (STORELESS) STATES */
-  case class State(control: Control, next: KontAddr) {
+  case class State(control: Control, next: KontAddr, ctx: Time) {
     override def toString = control.toString
     def integrate(next: KontAddr, vstore: VStore, actions: Set[Action[Exp,Abs,Addr]]): List[(State,VStore,Option[(KontAddr,Kont[KontAddr])])] = actions.toList.map({
       case ActionReachedValue(v, store : VStore, _) =>
-        (State(ControlKont(v), next), store, None)
+        (State(ControlKont(v), next, Timestamp[Time].tick(ctx)), store, None)
       case ActionPush(frame, e, env, store : VStore, _) => {
-        val kontAddr = NormalKontAddress(e)
-        (State(ControlEval(e,env),kontAddr), store, Some((kontAddr,Kont(frame,next))))
+        val kontAddr = NormalKontAddress(e,env)
+        (State(ControlEval(e,env),kontAddr, Timestamp[Time].tick(ctx)), store, Some((kontAddr,Kont(frame,next))))
       }
       case ActionEval(e, env, store : VStore, _) =>
-        (State(ControlEval(e,env), next), store, None)
+        (State(ControlEval(e,env),next,Timestamp[Time].tick(ctx)), store, None)
       case ActionStepIn(fexp, _, e, env, store : VStore, _, _) =>
-        (State(ControlEval(e,env), next), store, None)
+        (State(ControlEval(e,env), next, Timestamp[Time].tick(ctx,fexp)), store, None)
       case ActionError(err) =>
-        (State(ControlError(err), next), vstore, None)
+        (State(ControlError(err), next, Timestamp[Time].tick(ctx)), vstore, None)
     })
 
-    def step(sem: Semantics[Exp,Abs,Addr,ZeroCFA.T], vstore: VStore, kstore: KStore): List[(State,VStore,Option[(KontAddr,Kont[KontAddr])])] = control match {
+    def step(sem: Semantics[Exp,Abs,Addr,Time], vstore: VStore, kstore: KStore): List[(State,VStore,Option[(KontAddr,Kont[KontAddr])])] = control match {
       case ControlEval(exp,env) => integrate(next, vstore, sem.stepEval(exp,env,vstore,ctx))
       case ControlKont(vlu) => kstore.lookup(next).toList.flatMap({
         case Kont(frm,adr) => integrate(adr, vstore, sem.stepKont(vlu,frm,vstore,ctx))
@@ -84,7 +84,7 @@ class AAMGlobalStore[Exp : Expression, Abs : JoinLattice]
   }
 
   /* GLOBAL STORE AAM */
-  def stepStates(states: List[State], sem: Semantics[Exp,Abs,Addr,ZeroCFA.T], vstore: VStore, kstore: KStore): (List[(State,State)],Option[(VStore,KStore)]) = {
+  def stepStates(states: List[State], sem: Semantics[Exp,Abs,Addr,Time], vstore: VStore, kstore: KStore): (List[(State,State)],Option[(VStore,KStore)]) = {
       val (newStates,newVStore,newKStore,changed) = states.foldLeft((List[(State,State)](),vstore,kstore,false))({ case ((prevStates,prevVStore,prevKStore,prevChanged),state) => {
         val succs = state.step(sem,vstore,kstore)
         val updatedStates = succs.map({ case (succ,_,_) => (state,succ) }) ++ prevStates
@@ -113,9 +113,9 @@ class AAMGlobalStore[Exp : Expression, Abs : JoinLattice]
       }
     }})
 
-  def eval(exp: Exp, sem: Semantics[Exp,Abs,Addr,ZeroCFA.T], graph: Boolean, timeout: Timeout): Output = {
+  def eval(exp: Exp, sem: Semantics[Exp,Abs,Addr,Time], graph: Boolean, timeout: Timeout): Output = {
 
-    AdaptiveAddress.init()
+    //AdaptiveAddress.init()
 
     @scala.annotation.tailrec
     def loop(frontier: List[State], vstore: VStore, kstore: KStore, visited: Set[State], history: List[(VStore,KStore,Set[State])], graph: G): AAMGlobalStoreOutput = {
@@ -125,6 +125,7 @@ class AAMGlobalStore[Exp : Expression, Abs : JoinLattice]
         val (newEdges,newStores) = stepStates(frontier,sem,vstore,kstore)
         val newGraph = graph.map(_.addEdges(newEdges.map({case (from,to) => (from,(),to)})))
         val newStates = newEdges.map(_._2)
+        newStates.foreach(s => println((s.control,s.ctx,s.next)))
         if(newStores.isDefined) {
           val (newVStore,newKStore) = newStores.get
           val newHistory = (vstore,kstore,visited) :: history
@@ -140,18 +141,18 @@ class AAMGlobalStore[Exp : Expression, Abs : JoinLattice]
     val initialEnv = Environment.initial[Addr](sem.initialEnv)
     val initialSto = DeltaStore[Addr,Abs](sem.initialStore.toMap,Map())
     val initialStk = KontStore.empty[KontAddr]
-    val initialSta = State(ControlEval(exp,initialEnv),HaltKontAddress)
+    val initialSta = State(ControlEval(exp,initialEnv),HaltKontAddress,Timestamp[Time].initial(""))
     val initialGra : G = if (graph) { Some(Graph.empty) } else { None }
 
     def run(): Output = {
       try {
         val res = loop(List(initialSta),initialSto,initialStk,Set(initialSta),List(),initialGra)
-        println(AdaptiveAddress.config)
+        //println(AdaptiveAddress.config)
         res
       } catch {
         case AdaptiveAddress.AddrOverflow(id) => {
-          println(s"Switching to monovariant analysis for ${id}...")
-          AdaptiveAddress.reset()
+          //println(s"Switching to monovariant analysis for ${id}...")
+          //AdaptiveAddress.reset()
           run()
         }
       }
@@ -165,19 +166,31 @@ object Main {
 
   import Util._
 
-  val INPUT_LOCATION  = "test/church-6.scm"
-  val OUTPUT_LOCATION = "/Users/nvanes/Desktop/output.png"
+  val OUTPUT_DIR = "/Users/nvanes/Desktop/outputs/"
+
+  val boundedInt = new BoundedInteger(5)
+  val lattice: SchemeLattice = new MakeSchemeLattice[Type.S, Concrete.B, boundedInt.I, Type.F, Type.C, Type.Sym](false)
+  implicit val isSchemeLattice: IsSchemeLattice[lattice.L] = lattice.isSchemeLattice
+  val context = SCFA
+  implicit val isTimestamp = context.isTimestamp
+  val machine = new AAMGlobalStore[SchemeExp, lattice.L, context.T]
+  val sem = new SchemeSemantics[lattice.L, ClassicalAddress.A, context.T](new SchemePrimitives[ClassicalAddress.A, lattice.L])
 
   def main(args: Array[String]) = {
-    /* MACHINE CONFIGURATION */
-    val lattice: SchemeLattice = new MakeSchemeLattice[Concrete.S, Concrete.B, Concrete.I, Concrete.F, Concrete.C, Concrete.Sym](false)
-    implicit val isSchemeLattice: IsSchemeLattice[lattice.L] = lattice.isSchemeLattice
-    val machine = new AAMGlobalStore[SchemeExp, lattice.L]
-    val sem = new SchemeSemantics[lattice.L, AdaptiveAddress.A, ZeroCFA.T](new SchemePrimitives[AdaptiveAddress.A, lattice.L])
-    /* ANALYSE THE PROGRAM */
-    replOrFile(None, program => {
+    import java.io.File
+    val dir = new File("test/")
+    val files = dir.listFiles.map(_.getName).filter(_.endsWith(".scm")).toList
+    //files.foreach(runBenchmark(_))
+    runBenchmark("count")
+  }
+
+  def runBenchmark(name: String): Unit = {
+    val location = "test/" + name + ".scm"
+    replOrFile(Some(location), program => {
+      println(s"Running benchmark: ${name.toUpperCase}")
       val result = machine.eval(sem.parse(program), sem, true, Timeout.start(None))
-      result.toPng(OUTPUT_LOCATION)
+      println(s"States visited: ${result.numberOfStates}")
+      result.toPng(OUTPUT_DIR + name + "-" + isTimestamp.name + ".png")
     })
   }
 }
