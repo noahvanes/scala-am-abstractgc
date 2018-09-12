@@ -124,11 +124,12 @@ class AAM[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
 
     implicit val graphNode = new GraphNode[State, Unit] {
       override def label(s: State) = s.toString
-      override def color(s: State) = if (s.halted) { Colors.Yellow } else { s.control match {
-        case _: ControlEval => Colors.Green
-        case _: ControlKont => Colors.Pink
+      override def color(s: State) = s.control match {
+        case _: ControlEval => Colors.White
+        case _: ControlKont if s.halted => Colors.Green
+        case _: ControlKont => Colors.Yellow
         case _: ControlError => Colors.Red
-      }}
+      }
 
       import org.json4s._
       import org.json4s.JsonDSL._
@@ -215,5 +216,43 @@ class AAM[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
       Set(),
       /* Graph is initially empty, and we wrap it into an Option */
       if (graph) { Some(Graph.empty) } else { None })
+  }
+}
+
+object Main {
+
+  import Util._
+
+  val INPUT_DIR = "test/"
+  val OUTPUT_DIR = "/Users/nvanes/Desktop/outputs/"
+
+  val bounded = new BoundedInteger(10)
+  val lattice = new MakeSchemeLattice[Type.S, Concrete.B, bounded.I, Type.F, Type.C, Type.Sym](false)
+  val address = ClassicalAddress
+  val time = ZeroCFA
+  val sem = new SchemeSemantics[lattice.L, address.A, time.T](new SchemePrimitives[address.A, lattice.L])
+
+  def main(args: Array[String]): Unit = {
+    val current = "collatz"
+    benchmark(current,false)
+    benchmark(current,true)
+  }
+
+  def benchmark(name: String, globalStore: Boolean): Unit = {
+    val machine = if (globalStore) {
+      new AAMAACP4F[SchemeExp, lattice.L, address.A, time.T](AAMKAlloc)
+    } else {
+      new AAM[SchemeExp, lattice.L, address.A, time.T]
+    }
+    val benchName = s"${name}-${time.isTimestamp.name}-${globalStore}"
+    val file = INPUT_DIR + name + ".scm"
+    replOrFile(Some(file), text => {
+      val program = sem.parse(text)
+      println(s">>> RUNNING BENCHMARK ${benchName}")
+      val result = machine.eval(program,sem,true,Timeout.start(None))
+      result.toPng(OUTPUT_DIR + benchName + ".png")
+      println(s"states: ${result.numberOfStates}")
+      println(s"<<< FINISHED BENCHMARK ${benchName}")
+    })
   }
 }

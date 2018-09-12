@@ -837,15 +837,3 @@ object Scheme {
    */
   def parse(s: String): SchemeExp = undefine(SExpParser.parse(s).map(compile _))
 }
-
-object Main {
-
-  import Util._
-
-  def main(args: Array[String]): Unit = {
-    replOrFile(Some("test/blur.scm"), program => {
-      val prog = Scheme.parse(program)
-      SchemeUtils.extractFunctions(prog).foreach(println)
-    })
-  }
-}

@@ -77,8 +77,3 @@ object ValueSensitiveAddress extends AddressWrapper {
     }
   }
 }
-
-trait AdaptiveAddress
-abstract case class AdaptiveAllocator() extends Address[AdaptiveAddress] {
-  ???
-}

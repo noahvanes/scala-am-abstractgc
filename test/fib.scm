@@ -1,5 +1,9 @@
-(letrec ((fib (lambda (n)
+(letrec ((fib (lambda (n k)
                 (if (< n 2)
-                  n
-                  (+ (fib (- n 1)) (fib (- n 2)))))))
-  (fib 4))
+                    (k n)
+                    (fib (- n 1)
+                         (lambda (fib1)
+                            (fib (- n 2)
+                                 (lambda (fib2)
+                                    (k (+ fib1 fib2))))))))))
+    (fib 4 (lambda (V) V)))

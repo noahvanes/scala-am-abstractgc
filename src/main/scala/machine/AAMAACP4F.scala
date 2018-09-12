@@ -102,11 +102,12 @@ class AAMAACP4F[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Time
     type Context = Set[State]
     implicit val graphNode = new GraphNode[State, Context] {
       override def label(s: State) = s.toString
-      override def color(s: State, halted: Context) = if (halted.contains(s)) { Colors.Yellow } else { s.control match {
-        case _: ControlEval => Colors.Green
-        case _: ControlKont => Colors.Pink
+      override def color(s: State, halted: Context) = s.control match {
+        case _: ControlEval => Colors.White
+        case _: ControlKont if s.halted => Colors.Green
+        case _: ControlKont => Colors.Yellow
         case _: ControlError => Colors.Red
-      }}
+      }
     }
   }
 
