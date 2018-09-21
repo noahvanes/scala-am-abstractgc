@@ -75,6 +75,9 @@ class DotLanguage[Addr : Address] {
       def isPrimitiveValue(x: L) = false
       def cardinality(x: L) = CardinalityNumber(x.elements.length)
 
+      //TODO
+      def references[Addr : Address](x: L): Set[Addr] = ???
+
       def clo(v: Variable, body: Term, env: Env) =
         L(Set[Value](Closure(v, body, env)))
       def obj(v: Variable, defs: Definition, env: Env) =

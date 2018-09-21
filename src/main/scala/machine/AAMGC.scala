@@ -16,9 +16,9 @@
  * be evaluated within this environment, whereas a continuation state only
  * contains the value reached.
  */
-class AAM[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
+class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
     extends EvalKontMachine[Exp, Abs, Addr, Time] {
-  def name = "AAM"
+  def name = "AAMGC"
 
   /**
    * The store used for continuations is a KontStore (defined in
@@ -47,7 +47,7 @@ class AAM[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
    * continuation store, and an address representing where the current
    * continuation lives.
    */
-  case class State(control: Control, store: Store[Addr, Abs], kstore: KontStore[KontAddr], a: KontAddr, t: Time) {
+  case class State(control: Control, store: Store[Addr, Abs], kstore: GCKontStore[KontAddr], a: KontAddr, t: Time) {
     override def toString = control.toString
 
     /**
@@ -66,18 +66,18 @@ class AAM[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
     private def integrate(adr: KontAddr, actions: Set[Action[Exp, Abs, Addr]]): Set[State] =
       actions.flatMap({
         /* When a value is reached, we go to a continuation state */
-        case ActionReachedValue(v, store, _) => Set(State(ControlKont(v), store, kstore, adr, Timestamp[Time].tick(t)))
+        case ActionReachedValue(v, store, _) => Set(State(ControlKont(v), store, kstore.changeRoot(adr), adr, Timestamp[Time].tick(t)))
         /* When a continuation needs to be pushed, push it in the continuation store */
         case ActionPush(frame, e, env, store, _) => {
           val next = NormalKontAddress(e, t)
-          Set(State(ControlEval(e, env), store, kstore.extend(next, Kont(frame, adr)), next, Timestamp[Time].tick(t)))
+          Set(State(ControlEval(e, env), store, kstore.extend(next, Kont(frame, adr)).changeRoot(next), next, Timestamp[Time].tick(t)))
         }
         /* When a value needs to be evaluated, we go to an eval state */
-        case ActionEval(e, env, store, _) => Set(State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t)))
+        case ActionEval(e, env, store, _) => Set(State(ControlEval(e, env), store, kstore.changeRoot(adr), adr, Timestamp[Time].tick(t)))
         /* When a function is stepped in, we also go to an eval state */
-        case ActionStepIn(fexp, _, e, env, store, _, _) => Set(State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t, fexp)))
+        case ActionStepIn(fexp, _, e, env, store, _, _) => Set(State(ControlEval(e, env), store, kstore.changeRoot(adr), adr, Timestamp[Time].tick(t, fexp)))
         /* When an error is reached, we go to an error state */
-        case ActionError(err) => Set(State(ControlError(err), store, kstore, adr, Timestamp[Time].tick(t)))
+        case ActionError(err) => Set(State(ControlError(err), store, kstore.changeRoot(adr), adr, Timestamp[Time].tick(t)))
       })
 
     /**
@@ -119,7 +119,7 @@ class AAM[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
   object State {
     def inject(exp: Exp, env: Iterable[(String, Addr)], store: Iterable[(Addr, Abs)]) =
       State(ControlEval(exp, Environment.initial[Addr](env)),
-        Store.initial[Addr, Abs](store), KontStore.empty[KontAddr], HaltKontAddress, Timestamp[Time].initial(""))
+        Store.initial[Addr, Abs](store), KontStore.gcStore[KontAddr](HaltKontAddress), HaltKontAddress, Timestamp[Time].initial(""))
     import scala.language.implicitConversions
 
     implicit val graphNode = new GraphNode[State, Unit] {
@@ -197,7 +197,7 @@ class AAM[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
             } else {
               /* Otherwise, compute the successors of this state, update the graph, and push
                * the new successors on the todo list */
-              val succs = s.step(sem) /* s.step returns the set of successor states for s */
+              val succs = s.step(sem).map(s => s.copy(kstore = s.kstore.collect())) /* s.step returns the set of successor states for s */
               val newGraph = graph.map(_.addEdges(succs.map(s2 => (s, (), s2)))) /* add the new edges to the graph: from s to every successor */
               /* then, add new successors to the worklist, add s to the visited set, and loop with the new graph */
               loop(WorkList[WL].append(newTodo, succs), VisitedSet[VS].add(visited, s), halted, newGraph)

@@ -108,6 +108,9 @@ class MakeCSchemeLattice[LSeq : IsSchemeLattice] extends CSchemeLattice {
     def isPrimitiveValue(x: L) = lat.isPrimitiveValue(x.seq) && x.t.isEmpty && x.la.isEmpty
     def cardinality(x: L) = ??? /* TODO */
 
+    // TODO
+    def references[Addr : Address](x: L) = ???
+
     def inject(x: Int) = Value(seq = lat.inject(x))
     def intTop = Value(seq = lat.intTop)
     def inject(x: Double) = Value(seq = lat.inject(x))

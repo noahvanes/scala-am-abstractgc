@@ -286,6 +286,21 @@ case class SchemeActor(name: String, xs: List[Identifier], defs: Map[String, (Li
   override def toString = s"(a/actor $name ($xss) ($defss))"
 }
 
+// NEW GRAMMAR
+
+/**
+ * A lambda expression: (lambda (args...) body...)
+ * Not supported: "rest"-arguments, of the form (lambda arg body), or (lambda (arg1 . args) body...)
+ */
+case class SchemeLambdaFV(args: List[Identifier], body: List[SchemeExp], fv: List[String], pos: Position) extends SchemeExp {
+  require(body.nonEmpty)
+  override def toString = {
+    val a = args.mkString(" ")
+    val b = body.mkString(" ")
+    s"(lambda {$fv} ($a) $b)"
+  }
+}
+
 /**
  * Object that provides a method to compile an s-expression into a Scheme expression
  */
@@ -814,6 +829,85 @@ object SchemeUtils {
     case _ =>
       throw new Exception(s"Unhandled expression in extractFunctions: $exp")
   }
+
+  def fv(exp: SchemeExp): Set[String] = exp match {
+    case SchemeLambda(pars, body, pos) =>
+      body.flatMap(fv).toSet -- pars.map(_.name)
+    case SchemeFuncall(f, args, pos) =>
+      fv(f) ++ args.flatMap(fv)
+    case SchemeIf(cond, cons, alt, pos) =>
+      fv(cond) ++ fv(cons) ++ fv(alt)
+    case SchemeLet(bindings, body, pos) =>
+      val nams = bindings.map(bnd => bnd._1.name)
+      val exps = bindings.map(bnd => bnd._2)
+      val fv_bds = exps.flatMap(fv).toSet
+      val fv_bdy = body.flatMap(fv).toSet -- nams
+      fv_bds ++ fv_bdy
+    case SchemeLetStar(bindings, body, pos) =>
+      val (nams,fv_bds) = bindings.foldLeft((Set[String](),Set[String]()))((acc,bnd) => {
+        val (acc_names,acc_fvs) = acc
+        val (name,binding_exp) = bnd
+        (acc_names + name.name, fv(binding_exp) -- acc_names)
+      })
+      val fv_bdy = body.flatMap(fv).toSet -- nams
+      fv_bds ++ fv_bdy
+    case SchemeLetrec(bindings, body, pos) =>
+      val nams = bindings.map(bnd => bnd._1.name)
+      val exps = bindings.map(bnd => bnd._2)
+      val fv_bds = exps.flatMap(fv).toSet -- nams
+      val fv_bdy = body.flatMap(fv).toSet -- nams
+      fv_bds ++ fv_bdy
+    case SchemeNamedLet(name, bindings, body, pos) =>
+      val nams = bindings.map(bnd => bnd._1.name)
+      val exps = bindings.map(bnd => bnd._2)
+      val fv_bds = exps.flatMap(fv).toSet
+      val fv_bdy = body.flatMap(fv).toSet -- nams - name.name
+      fv_bds ++ fv_bdy
+    case SchemeSet(variable, value, pos) =>
+      fv(value) + variable.name
+    case SchemeBegin(body, pos) =>
+      body.flatMap(fv).toSet
+    case SchemeCond(clauses, pos) =>
+      clauses.foldLeft(Set[String]())((acc,clause) => {
+        val (cnd,bdy) = clause
+        acc ++ fv(cnd) ++ bdy.flatMap(fv)
+      })
+    case SchemeCase(exp, clauses, default, pos) =>
+      val all_exps = clauses.flatMap(_._2) ++ default
+      all_exps.flatMap(fv).toSet
+    case SchemeAnd(exps, pos) =>
+      exps.flatMap(fv).toSet
+    case SchemeOr(exps, pos) =>
+      exps.flatMap(fv).toSet
+    case SchemeQuoted(quoted, pos) =>
+      Set()
+    case SchemeVar(id) =>
+      Set(id.name)
+    case SchemeValue(v, pos) =>
+      Set()
+    case _ =>
+      throw new Exception(s"Unhandled expression in fv: $exp")
+  }
+
+  def computeFreeVar(exp: SchemeExp): SchemeExp = exp match {
+    case SchemeLambda(pars, body, pos) => SchemeLambdaFV(pars,body.map(computeFreeVar),fv(exp).toList,pos)
+    case SchemeFuncall(f, args, pos) => SchemeFuncall(computeFreeVar(f),args.map(computeFreeVar),pos)
+    case SchemeIf(cond, cons, alt, pos) => SchemeIf(computeFreeVar(cond),computeFreeVar(cons),computeFreeVar(alt),pos)
+    case SchemeLet(bindings, body, pos) => SchemeLet(bindings.map(bnd => (bnd._1, computeFreeVar(bnd._2))), body.map(computeFreeVar), pos)
+    case SchemeLetStar(bindings, body, pos) => SchemeLetStar(bindings.map(bnd => (bnd._1, computeFreeVar(bnd._2))), body.map(computeFreeVar), pos)
+    case SchemeLetrec(bindings, body, pos) => SchemeLetrec(bindings.map(bnd => (bnd._1, computeFreeVar(bnd._2))), body.map(computeFreeVar), pos)
+    case SchemeNamedLet(name, bindings, body, pos) => SchemeNamedLet(name, bindings.map(bnd => (bnd._1, computeFreeVar(bnd._2))), body.map(computeFreeVar), pos)
+    case SchemeSet(variable, value, pos) => SchemeSet(variable, computeFreeVar(value), pos)
+    case SchemeBegin(body, pos) => SchemeBegin(body.map(computeFreeVar), pos)
+    case SchemeCond(clauses, pos) => SchemeCond(clauses.map(cls => (computeFreeVar(cls._1),cls._2.map(computeFreeVar))), pos)
+    case SchemeCase(exp, clauses, default, pos) => SchemeCase(computeFreeVar(exp),clauses.map(cls => (cls._1,cls._2.map(computeFreeVar))),default.map(computeFreeVar), pos)
+    case SchemeAnd(exps, pos) => SchemeAnd(exps.map(computeFreeVar), pos)
+    case SchemeOr(exps, pos) => SchemeOr(exps.map(computeFreeVar), pos)
+    case SchemeQuoted(quoted, pos) => SchemeQuoted(quoted, pos)
+    case SchemeVar(id) => SchemeVar(id)
+    case SchemeValue(v, pos) => SchemeValue(v,pos)
+    case _ => throw new Exception(s"Unhandled expression in fv: $exp")
+  }
 }
 
 object Scheme {
@@ -836,4 +930,17 @@ object Scheme {
    * Parse a string representing a Scheme program
    */
   def parse(s: String): SchemeExp = undefine(SExpParser.parse(s).map(compile _))
+}
+
+object MainOld {
+
+  import Util._
+
+  def main(args: Array[String]): Unit = {
+    replOrFile(None, filename => replOrFile(Some(s"test/${filename}.scm"), txt => {
+      val prg = Scheme.parse(txt)
+      println(prg)
+      main(Array())
+    }))
+  }
 }

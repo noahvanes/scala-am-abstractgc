@@ -95,6 +95,14 @@ class MakeSchemeLattice[
       case Closure(_, _) | Prim(_) | Cons(_, _) | VectorAddress(_) | Vec(_, _, _) => false
     }
 
+    def references[Addr : Address](x: Value): Set[Addr] = x match {
+      case Bot | Str(_) | Bool(_) | Int(_) | Real(_) | Char(_) | Symbol(_) | Prim(_) | Nil => Set()
+      case Closure(exp, env : Environment[Addr] @unchecked) => env.addrs.toSet
+      case Cons(car : Addr @unchecked, cdr : Addr @unchecked) => Set(car,cdr)
+      case VectorAddress(adr : Addr @unchecked) => Set(adr)
+      case Vec(_, content : Map[_,Addr] @unchecked, init : Addr @unchecked) => content.values.toSet + init
+    }
+
     def cardinality(x: Value): Cardinality = x match {
       case Bot => CardinalityNumber(0)
       case Str(s) => StringLattice[S].cardinality(s)
@@ -490,6 +498,8 @@ class MakeSchemeLattice[
   val isSchemeLattice = new IsSchemeLattice[L] {
     val name = s"SetLattice(${StringLattice[S].name}, ${BoolLattice[B].name}, ${IntLattice[I].name}, ${RealLattice[F].name}, ${CharLattice[C].name}, ${SymbolLattice[Sym].name})"
     val counting = supportsCounting
+
+    def references[Addr : Address](x: L): Set[Addr] = foldMapL(x, isSchemeLatticeValue.references(_))
 
     def isTrue(x: L): Boolean = foldMapL(x, isSchemeLatticeValue.isTrue(_))(boolOrMonoid)
     def isFalse(x: L): Boolean = foldMapL(x, isSchemeLatticeValue.isFalse(_))(boolOrMonoid)

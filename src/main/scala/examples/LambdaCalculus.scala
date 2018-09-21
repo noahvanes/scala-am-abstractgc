@@ -64,6 +64,9 @@ object LamLatticeImpl {
     /** The cardinality is just the number of elements in the set */
     def cardinality(x: L) = CardinalityNumber(x.elements.size)
 
+    //TODO
+    def references[Addr : Address](x: L): Set[Addr] = ???
+
     /** To inject a closure into our lattice, we just wrap it in a L */
     def inject[Exp : Expression, Addr : Address](x: (Exp, Environment[Addr])): L = L(Set[Value](Closure[Exp, Addr](x._1, x._2)))
     /** And we can extract closures from an abstract value */

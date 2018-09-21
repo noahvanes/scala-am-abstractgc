@@ -89,5 +89,8 @@ class MakeASchemeLattice[LSeq : IsSchemeLattice] extends ASchemeLattice {
     })
     def isPrimitiveValue(x: L) = lat.isPrimitiveValue(x.seq) && x.p.isEmpty && x.b.isEmpty
     def cardinality(x: L) = ??? /* TODO */
+
+    // TODO
+    def references[Addr : Address](x: L) = ???
   }
 }

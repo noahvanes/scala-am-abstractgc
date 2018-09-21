@@ -30,6 +30,9 @@ trait JoinLattice[L] extends Monoid[L] with PartialOrdering[L] {
   /** Cardinality of this value */
   def cardinality(x: L): Cardinality
 
+  /** References of a value */
+  def references[Addr : Address](x: L): Set[Addr] 
+
   trait JoinLatticeLaw {
     import scalaz.std.boolean.conditional
     def bottomLowerBound(a: L): Boolean = subsumes(a, bottom)

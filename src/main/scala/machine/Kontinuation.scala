@@ -45,9 +45,95 @@ case class BasicKontStore[KontAddr : KontAddress](content: Map[KontAddr, Set[Kon
     })
 }
 
+case class GCKontStore[KontAddr : KontAddress](root: KontAddr, content: Map[KontAddr, Set[Kont[KontAddr]]], refs: Map[KontAddr,Set[KontAddr]]) extends KontStore[KontAddr] {
+
+  def changeRoot(r: KontAddr): GCKontStore[KontAddr] = this.copy(root = r)
+
+  def mark(adr: KontAddr, marked: Set[KontAddr]): Set[KontAddr] =
+    refs(adr).foldLeft(marked + adr)((acc,ref) => if (acc.contains(ref)) { acc } else { acc ++ mark(ref,acc) })
+
+  def collect(): GCKontStore[KontAddr] = {
+    val marked = mark(root,Set())
+    val updatedContent = content.filterKeys(marked)
+    val updatedRefs = refs.filterKeys(marked).withDefaultValue(Set())
+    this.copy(content = updatedContent, refs = updatedRefs)
+  }
+
+  def keys = content.keys
+  def lookup(adr: KontAddr) = content(adr)
+  def forall(p: ((KontAddr, Set[Kont[KontAddr]])) => Boolean) = content.forall(p)
+
+  def extendCollect(adr: KontAddr, kont: Kont[KontAddr]): GCKontStore[KontAddr] =
+    if (content.contains(adr)) {  // risk of zombie creation
+      collect().extend(adr,kont)
+    } else {
+      extend(adr,kont)
+    }
+
+  def extend(adr: KontAddr, kont: Kont[KontAddr]): GCKontStore[KontAddr] = {
+    val adrRefs = refs(adr)
+    val adrCnts = content.get(adr).getOrElse(Set())
+    if (adrRefs.contains(kont.next)) {
+      this.copy(content = content + (adr -> (adrCnts + kont)))
+    } else {
+      this.copy(content = content + (adr -> (adrCnts + kont)),
+                refs = refs + (adr -> (adrRefs + kont.next)))
+    }
+  }
+
+  /* TODO */
+
+  def join(that: KontStore[KontAddr]) = throw new Exception("NYI: GCKontStore.join(KontStore[KontAddr])")
+  def subsumes(that: KontStore[KontAddr]) = throw new Exception("NYI: GCKontStore.subsumes(KontStore[KontAddr])")
+
+}
+
+case class RefCountingKontStore[KontAddr : KontAddress](content: Map[KontAddr, Set[Kont[KontAddr]]] = Map[KontAddr, Set[Kont[KontAddr]]](),
+                                                        counts: Map[KontAddr,Int] = Map[KontAddr,Int]().withDefaultValue(0),
+                                                        refs: Map[KontAddr,Set[KontAddr]] = Map[KontAddr,Set[KontAddr]]().withDefaultValue(Set())) extends KontStore[KontAddr] {
+
+  private def decRefUpdate(adr: KontAddr, content: Map[KontAddr,Set[Kont[KontAddr]]], counts: Map[KontAddr,Int], refs: Map[KontAddr,Set[KontAddr]]): (Map[KontAddr,Set[Kont[KontAddr]]],Map[KontAddr,Int],Map[KontAddr,Set[KontAddr]]) = {
+    val newCount = counts(adr) - 1
+    if (newCount == 0) {
+      refs(adr).foldLeft((content - adr, counts - adr, refs - adr))((acc,ref) => decRefUpdate(ref,acc._1,acc._2,acc._3))
+    } else {
+      (content, counts + (adr -> newCount), refs)
+    }
+  }
+
+  def decRef(adr: KontAddr): RefCountingKontStore[KontAddr] = {
+    val (updatedContent,updatedCounts,updatedRefs) = decRefUpdate(adr,content,counts,refs)
+    this.copy(content = updatedContent, counts = updatedCounts, refs = updatedRefs)
+  }
+
+  def addRef(adr: KontAddr): RefCountingKontStore[KontAddr] =
+    this.copy(counts = counts + (adr -> (counts(adr) + 1)))
+
+  def keys = content.keys
+  def lookup(adr: KontAddr) = content(adr)
+  def forall(p: ((KontAddr, Set[Kont[KontAddr]])) => Boolean) = content.forall(p)
+
+  def extend(adr: KontAddr, kont: Kont[KontAddr]): RefCountingKontStore[KontAddr] = {
+    val adrRefs = refs(adr)
+    val adrCnts = content.get(adr).getOrElse(Set())
+    if (adrRefs.contains(kont.next)) {
+      this.copy(content = content + (adr -> (adrCnts + kont)))
+    } else {
+      this.copy(content = content + (adr -> (adrCnts + kont)),
+                counts = counts + (kont.next -> (counts(kont.next) + 1)),
+                refs = refs + (adr -> (adrRefs + kont.next)))
+    }
+  }
+
+  /* TODO */
+
+  def join(that: KontStore[KontAddr]) = throw new Exception("NYI: RefCountingKontStore.join(KontStore[KontAddr])")
+  def subsumes(that: KontStore[KontAddr]) = throw new Exception("NYI: RefCountingKontStore.subsumes(KontStore[KontAddr])")
+}
+
 case class TimestampedKontStore[KontAddr : KontAddress](content: Map[KontAddr, Set[Kont[KontAddr]]], timestamp: Int) extends KontStore[KontAddr] {
   def keys = content.keys
-  def lookup(a: KontAddr) = content.getOrElse(a, Set())
+  def lookup(a: KontAddr) = content.getOrElse(a,Set())
   override def toString = content.toString
   def extend(a: KontAddr, kont: Kont[KontAddr]) = /* Profiler.logRes(s"$this.extend($a, $kont)") */ {
     content.get(a) match {
@@ -88,4 +174,8 @@ case class TimestampedKontStore[KontAddr : KontAddress](content: Map[KontAddr, S
 object KontStore {
   def empty[KontAddr : KontAddress]: KontStore[KontAddr] =
     new BasicKontStore[KontAddr](Map())
+  def refCountStore[KontAddr : KontAddress]: RefCountingKontStore[KontAddr] =
+    new RefCountingKontStore[KontAddr]
+  def gcStore[KontAddr : KontAddress](root: KontAddr): GCKontStore[KontAddr] =
+    new GCKontStore[KontAddr](root, Map(), Map().withDefaultValue(Set()))
 }

@@ -16,9 +16,9 @@
  * be evaluated within this environment, whereas a continuation state only
  * contains the value reached.
  */
-class AAM[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
+class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
     extends EvalKontMachine[Exp, Abs, Addr, Time] {
-  def name = "AAM"
+  def name = "AAMRefCounting"
 
   /**
    * The store used for continuations is a KontStore (defined in
@@ -47,7 +47,7 @@ class AAM[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
    * continuation store, and an address representing where the current
    * continuation lives.
    */
-  case class State(control: Control, store: Store[Addr, Abs], kstore: KontStore[KontAddr], a: KontAddr, t: Time) {
+  case class State(control: Control, store: Store[Addr, Abs], kstore: RefCountingKontStore[KontAddr], a: KontAddr, t: Time) {
     override def toString = control.toString
 
     /**
@@ -59,6 +59,16 @@ class AAM[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
     def subsumes(that: State): Boolean = control.subsumes(that.control) && store.subsumes(that.store) && a == that.a && kstore.subsumes(that.kstore) && t == that.t
 
     /**
+      * When the "root reference" of the state changes, we need to update the reference counts
+      * This procedure checks if the root has changed, if so:
+      * - it increments the ref count of the new root
+      * - it decrements the ref count of the old root
+      * Otherwise, no modifications need to be made
+      */
+    private def changeRoot(kstore: RefCountingKontStore[KontAddr], root: KontAddr): RefCountingKontStore[KontAddr] =
+      if (a != root) { kstore.addRef(root).decRef(a) } else { kstore }
+
+    /**
      * Integrates a set of actions (returned by the semantics, see
      * Semantics.scala), in order to generate a set of states that succeeds this
      * one.
@@ -66,18 +76,18 @@ class AAM[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
     private def integrate(adr: KontAddr, actions: Set[Action[Exp, Abs, Addr]]): Set[State] =
       actions.flatMap({
         /* When a value is reached, we go to a continuation state */
-        case ActionReachedValue(v, store, _) => Set(State(ControlKont(v), store, kstore, adr, Timestamp[Time].tick(t)))
+        case ActionReachedValue(v, store, _) => Set(State(ControlKont(v), store, changeRoot(kstore,adr), adr, Timestamp[Time].tick(t)))
         /* When a continuation needs to be pushed, push it in the continuation store */
         case ActionPush(frame, e, env, store, _) => {
           val next = NormalKontAddress(e, t)
-          Set(State(ControlEval(e, env), store, kstore.extend(next, Kont(frame, adr)), next, Timestamp[Time].tick(t)))
+          Set(State(ControlEval(e, env), store, changeRoot(kstore.extend(next, Kont(frame,adr)),next), next, Timestamp[Time].tick(t)))
         }
         /* When a value needs to be evaluated, we go to an eval state */
-        case ActionEval(e, env, store, _) => Set(State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t)))
+        case ActionEval(e, env, store, _) => Set(State(ControlEval(e, env), store, changeRoot(kstore,adr), adr, Timestamp[Time].tick(t)))
         /* When a function is stepped in, we also go to an eval state */
-        case ActionStepIn(fexp, _, e, env, store, _, _) => Set(State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t, fexp)))
+        case ActionStepIn(fexp, _, e, env, store, _, _) => Set(State(ControlEval(e, env), store, changeRoot(kstore,adr), adr, Timestamp[Time].tick(t, fexp)))
         /* When an error is reached, we go to an error state */
-        case ActionError(err) => Set(State(ControlError(err), store, kstore, adr, Timestamp[Time].tick(t)))
+        case ActionError(err) => Set(State(ControlError(err), store, changeRoot(kstore,adr), adr, Timestamp[Time].tick(t)))
       })
 
     /**
@@ -119,7 +129,7 @@ class AAM[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
   object State {
     def inject(exp: Exp, env: Iterable[(String, Addr)], store: Iterable[(Addr, Abs)]) =
       State(ControlEval(exp, Environment.initial[Addr](env)),
-        Store.initial[Addr, Abs](store), KontStore.empty[KontAddr], HaltKontAddress, Timestamp[Time].initial(""))
+        Store.initial[Addr, Abs](store), KontStore.refCountStore[KontAddr].addRef(HaltKontAddress), HaltKontAddress, Timestamp[Time].initial(""))
     import scala.language.implicitConversions
 
     implicit val graphNode = new GraphNode[State, Unit] {
@@ -216,5 +226,63 @@ class AAM[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
       Set(),
       /* Graph is initially empty, and we wrap it into an Option */
       if (graph) { Some(Graph.empty) } else { None })
+  }
+}
+
+object Main {
+
+  import Util._
+  import scala.concurrent.duration.Duration
+
+  val INPUT_DIR = "test/"
+  val OUTPUT_DIR = "/Users/nvanes/Desktop/outputs/"
+  val OUTPUT_PNG = false
+  val WARMUP_RUNS = 0
+  val TIMEOUT = Duration(60, "seconds")
+
+  val bounded = new BoundedInteger(1)
+  val lattice = new MakeSchemeLattice[Type.S, Concrete.B, Type.I, Type.F, Type.C, Type.Sym](false)
+  val address = ClassicalAddress
+  val time = ZeroCFA
+  implicit val isTimestamp = time.isTimestamp
+  val sem = new SchemeSemantics[lattice.L, address.A, time.T](new SchemePrimitives[address.A, lattice.L])
+
+  trait GCStrategy { def name: String }
+  case object NoGC extends GCStrategy { def name = "NoGC" }
+  case object RefCounting extends GCStrategy { def name = "RefCounting" }
+  case object ClassicalGC extends GCStrategy { def name = "ClassicalGC" }
+
+  def main(args: Array[String]): Unit = {
+    val current = "collatz"
+    benchmark(current,ClassicalGC)
+    benchmark(current,RefCounting)
+  }
+
+  def benchmark(name: String, gcStrategy: GCStrategy): Unit = {
+    val machine = gcStrategy match {
+      case NoGC => new AAM[SchemeExp, lattice.L, address.A, time.T]
+      case RefCounting => new AAMRefCounting[SchemeExp, lattice.L, address.A, time.T]
+      case ClassicalGC => new AAMGC[SchemeExp, lattice.L, address.A, time.T]
+    }
+    val benchName = s"${name}-${time.isTimestamp.name}-${gcStrategy.name}"
+    val file = INPUT_DIR + name + ".scm"
+    replOrFile(Some(file), text => {
+      val program = sem.parse(text)
+      println(s">>> RUNNING BENCHMARK ${benchName}")
+      print("warming up")
+      (1 to WARMUP_RUNS).foreach( i => { print(".") ; machine.eval(program,sem,true,Timeout.start(TIMEOUT)) })
+      println()
+      val t0 = System.nanoTime()
+      val result = machine.eval(program,sem,true,Timeout.start(TIMEOUT))
+      val t1 = System.nanoTime()
+      if (result.timedOut) {
+        println("<<TIMEOUT>>")
+      } else {
+        println(s"states: ${result.numberOfStates}")
+        println(s"elapsed: ${(t1-t0)/1000000}ms")
+      }
+      if (OUTPUT_PNG) { result.toPng(OUTPUT_DIR + benchName + ".png") }
+      println(s"<<< FINISHED BENCHMARK ${benchName}")
+    })
   }
 }

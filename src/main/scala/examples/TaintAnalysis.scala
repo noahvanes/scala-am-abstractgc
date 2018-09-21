@@ -76,6 +76,10 @@ class TaintLattice[Abs : IsSchemeLattice] extends SchemeLattice {
 
     def isPrimitiveValue(x: L) = JoinLattice[Abs].isPrimitiveValue(x._2)
     def cardinality(x: L) = JoinLattice[Abs].cardinality(x._2) /* We could return the cardinality of the taint part instead */
+
+    //TODO
+    def references[Addr : Address](x: L): Set[Addr] = ???
+
     def isTrue(x: L) = IsSchemeLattice[Abs].isTrue(x._2)
     def isFalse(x: L) = IsSchemeLattice[Abs].isFalse(x._2)
     def unaryOp(op: SchemeOps.UnaryOperator)(x: L): MayFail[L] =
