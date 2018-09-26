@@ -301,6 +301,15 @@ case class SchemeLambdaFV(args: List[Identifier], body: List[SchemeExp], fv: Lis
   }
 }
 
+case class SchemePrimVar[Addr : Address](adr: Addr, id: Identifier) extends SchemeExp {
+  val pos = id.pos
+  override def toString = s"[${id.toString}]"
+}
+
+case class SchemePrimSet[Addr : Address](adr: Addr, id: Identifier, value: SchemeExp, pos: Position) extends SchemeExp {
+  override def toString = s"(set! [${id}] ${value})"
+}
+
 /**
  * Object that provides a method to compile an s-expression into a Scheme expression
  */
@@ -873,7 +882,7 @@ object SchemeUtils {
         acc ++ fv(cnd) ++ bdy.flatMap(fv)
       })
     case SchemeCase(exp, clauses, default, pos) =>
-      val all_exps = clauses.flatMap(_._2) ++ default
+      val all_exps = clauses.flatMap(_._2) ++ default ++ Set(exp)
       all_exps.flatMap(fv).toSet
     case SchemeAnd(exps, pos) =>
       exps.flatMap(fv).toSet
@@ -884,6 +893,10 @@ object SchemeUtils {
     case SchemeVar(id) =>
       Set(id.name)
     case SchemeValue(v, pos) =>
+      Set()
+    case SchemePrimVar(adr,v) =>
+      Set()
+    case SchemePrimSet(adr,id,value,pos) =>
       Set()
     case _ =>
       throw new Exception(s"Unhandled expression in fv: $exp")
@@ -903,11 +916,66 @@ object SchemeUtils {
     case SchemeCase(exp, clauses, default, pos) => SchemeCase(computeFreeVar(exp),clauses.map(cls => (cls._1,cls._2.map(computeFreeVar))),default.map(computeFreeVar), pos)
     case SchemeAnd(exps, pos) => SchemeAnd(exps.map(computeFreeVar), pos)
     case SchemeOr(exps, pos) => SchemeOr(exps.map(computeFreeVar), pos)
-    case SchemeQuoted(quoted, pos) => SchemeQuoted(quoted, pos)
-    case SchemeVar(id) => SchemeVar(id)
-    case SchemeValue(v, pos) => SchemeValue(v,pos)
+    case SchemeQuoted(quoted, pos) => exp
+    case SchemeVar(id) => exp
+    case SchemePrimVar(adr,id) => exp
+    case SchemePrimSet(adr,id,value,pos) => exp
+    case SchemeValue(v, pos) => exp
     case _ => throw new Exception(s"Unhandled expression in fv: $exp")
   }
+
+  def inline[Addr : Address](exp: SchemeExp, bindings: Map[String,Addr]): SchemeExp = exp match {
+    case SchemeLambda(pars, body, pos) =>
+      SchemeLambda(pars,body.map(e => inline(e, bindings -- pars.map(_.name))), pos)
+    case SchemeFuncall(f, args, pos) =>
+      SchemeFuncall(inline(f,bindings), args.map(arg => inline(arg,bindings)), pos)
+    case SchemeIf(cond, cons, alt, pos) =>
+      SchemeIf(inline(cond,bindings), inline(cons,bindings),inline(alt,bindings), pos)
+    case SchemeLet(bnds, body, pos) =>
+      SchemeLet(bnds.map(bnd => (bnd._1,inline(bnd._2,bindings))),
+                body.map(e => inline(e, bindings -- bnds.map(_._1.name))),
+                pos)
+    case SchemeLetStar(bnds, body, pos) =>
+      val (allNames,newBnds) = bnds.foldLeft((Set[String](),List[(Identifier,SchemeExp)]()))((acc,bnd) => {
+        val newBnd = (bnd._1, inline(bnd._2, bindings -- acc._1))
+        (acc._1 + bnd._1.name, newBnd :: acc._2)
+      })
+      SchemeLetStar(newBnds.reverse,body.map(e => inline(e,bindings -- allNames)),pos)
+    case SchemeLetrec(bnds, body, pos) =>
+      SchemeLetrec(bnds.map(bnd => (bnd._1,inline(bnd._2, bindings -- bnds.map(_._1.name)))),
+                   body.map(e => inline(e, bindings -- bnds.map(_._1.name))),
+                   pos)
+    case SchemeNamedLet(name, bnds, body, pos) =>
+      SchemeNamedLet(name,
+                     bnds.map(bnd => (bnd._1,inline(bnd._2,bindings))),
+                     body.map(e => inline(e,bindings -- bnds.map(_._1.name) - name.name)),
+                     pos)
+    case SchemeSet(variable, value, pos) if bindings.contains(variable.name) =>
+      SchemePrimSet(bindings(variable.name), variable, inline(value,bindings), pos)
+    case SchemeSet(variable, value, pos) =>
+      SchemeSet(variable, inline(value,bindings), pos)
+    case SchemeBegin(body, pos) =>
+      SchemeBegin(body.map(e => inline(e,bindings)),pos)
+    case SchemeCond(clauses, pos) =>
+      SchemeCond(clauses.map(cls => (cls._1,cls._2.map(e => inline(e,bindings)))),pos)
+    case SchemeCase(exp, clauses, default, pos) =>
+      SchemeCase(inline(exp,bindings),clauses.map(cls => (cls._1,cls._2.map(e=>inline(e,bindings)))),default.map(e=>inline(e,bindings)),pos)
+    case SchemeAnd(exps, pos) =>
+      SchemeAnd(exps.map(e => inline(e,bindings)),pos)
+    case SchemeOr(exps, pos) =>
+      SchemeOr(exps.map(e => inline(e,bindings)),pos)
+    case SchemeQuoted(quoted, pos) =>
+      SchemeQuoted(quoted,pos)
+    case SchemeVar(id) if bindings.contains(id.name) =>
+      SchemePrimVar(bindings(id.name),id)
+    case SchemeVar(id) =>
+      SchemeVar(id)
+    case SchemeValue(v, pos) =>
+      SchemeValue(v, pos)
+    case _ =>
+      throw new Exception(s"Unhandled expression in inline: $exp")
+  }
+
 }
 
 object Scheme {

@@ -23,6 +23,7 @@ class BaseSchemeSemantics[V : IsSchemeLattice, Addr : Address, Time : Timestamp]
   case class FrameLetStar(variable: Identifier, bindings: List[(Identifier, SchemeExp)], body: List[SchemeExp], env: Env) extends SchemeFrame
   case class FrameLetrec(addr: Addr, bindings: List[(Addr, SchemeExp)], body: List[SchemeExp], env: Env) extends SchemeFrame
   case class FrameSet(variable: Identifier, env: Env) extends SchemeFrame
+  case class FramePrimSet(adr : Addr) extends SchemeFrame
   case class FrameBegin(rest: List[SchemeExp], env: Env) extends SchemeFrame
   case class FrameCond(cons: List[SchemeExp], clauses: List[(SchemeExp, List[SchemeExp])], env: Env) extends SchemeFrame
   case class FrameCase(clauses: List[(List[SchemeValue], List[SchemeExp])], default: List[SchemeExp], env: Env) extends SchemeFrame
@@ -129,6 +130,7 @@ class BaseSchemeSemantics[V : IsSchemeLattice, Addr : Address, Time : Timestamp]
 
   def stepEval(e: SchemeExp, env: Env, store: Sto, t: Time) = e match {
     case λ: SchemeLambda => Action.value(IsSchemeLattice[V].inject[SchemeExp, Addr]((λ, env)), store)
+    case SchemeLambdaFV(pars,body,fv,pos) => Action.value(IsSchemeLattice[V].inject[SchemeExp, Addr]((SchemeLambda(pars,body,pos),env.trim(fv))), store)
     case SchemeFuncall(f, args, _) => Action.push(FrameFuncallOperator(f, args, env), f, env, store)
     case SchemeIf(cond, cons, alt, _) => Action.push(FrameIf(cons, alt, env), cond, env, store)
     case SchemeLet(Nil, body, _) => evalBody(body, env, store)
@@ -179,6 +181,12 @@ class BaseSchemeSemantics[V : IsSchemeLattice, Addr : Address, Time : Timestamp]
       }
       case None => Action.error(UnboundVariable(variable))
     }
+    case SchemePrimVar(adr : Addr @unchecked, _) => store.lookup(adr) match {
+      case Some(v) => Action.value(v, store, Set(EffectReadVariable(adr)))
+      case None => Action.error(UnboundAddress(adr.toString))
+    }
+    case SchemePrimSet(adr : Addr @unchecked, _, vexp, _) =>
+      Action.push(FramePrimSet(adr), vexp, env, store)
     case SchemeQuoted(quoted, _) => evalQuoted(quoted, store, t) match {
       case (value, store2) => Action.value(value, store2)
     }
@@ -219,6 +227,8 @@ class BaseSchemeSemantics[V : IsSchemeLattice, Addr : Address, Time : Timestamp]
       case Some(a) => Action.value(IsSchemeLattice[V].inject(false), store.update(a, v), Set(EffectWriteVariable(a)))
       case None => Action.error(UnboundVariable(variable))
     }
+    case FramePrimSet(adr) =>
+      Action.value(IsSchemeLattice[V].inject(false), store.update(adr,v), Set(EffectWriteVariable(adr)))
     case FrameBegin(body, env) => evalBody(body, env, store)
     case FrameCond(cons, clauses, env) =>
       conditional(v, if (cons.isEmpty) { Action.value(v, store) } else { evalBody(cons, env, store) },
@@ -290,7 +300,9 @@ class SchemeSemantics[V : IsSchemeLattice, Addr : Address, Time : Timestamp](pri
    * the evaluation if it succeeded, otherwise returns None */
   protected def atomicEval(e: SchemeExp, env: Env, store: Sto): Option[(V, Set[Effect[Addr]])] = e match {
     case λ: SchemeLambda => Some((IsSchemeLattice[V].inject[SchemeExp, Addr]((λ, env)), Set()))
-    case SchemeVar(variable) => env.lookup(variable.name).flatMap(a => store.lookup(a).map(v => (v, Set(EffectReadVariable(a)))))
+    case SchemeLambdaFV(pars,body,fv,pos) => Some((IsSchemeLattice[V].inject[SchemeExp, Addr]((SchemeLambda(pars,body,pos),env.trim(fv))), Set()))
+    case SchemeVar(id) => env.lookup(id.name).flatMap(adr => store.lookup(adr).map(v => (v, Set(EffectReadVariable(adr)))))
+    case SchemePrimVar(adr : Addr @unchecked, _) => store.lookup(adr).map(v => (v, Set(EffectReadVariable(adr))))
     case SchemeValue(v, _) => evalValue(v).map(value => (value, Set()))
     case _ => None
   }

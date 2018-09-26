@@ -237,7 +237,7 @@ object Main {
   val INPUT_DIR = "test/"
   val OUTPUT_DIR = "/Users/nvanes/Desktop/outputs/"
   val OUTPUT_PNG = false
-  val WARMUP_RUNS = 0
+  val WARMUP_RUNS = 5
   val TIMEOUT = Duration(60, "seconds")
 
   val bounded = new BoundedInteger(1)
@@ -253,7 +253,8 @@ object Main {
   case object ClassicalGC extends GCStrategy { def name = "ClassicalGC" }
 
   def main(args: Array[String]): Unit = {
-    val current = "collatz"
+    val current = "primtest"
+    //benchmark(current,NoGC)
     benchmark(current,ClassicalGC)
     benchmark(current,RefCounting)
   }
@@ -267,13 +268,14 @@ object Main {
     val benchName = s"${name}-${time.isTimestamp.name}-${gcStrategy.name}"
     val file = INPUT_DIR + name + ".scm"
     replOrFile(Some(file), text => {
-      val program = sem.parse(text)
+      val program = SchemeUtils.computeFreeVar(SchemeUtils.inline(sem.parse(text),sem.initialEnv.toMap))
+      //val program = sem.parse(text)
       println(s">>> RUNNING BENCHMARK ${benchName}")
       print("warming up")
-      (1 to WARMUP_RUNS).foreach( i => { print(".") ; machine.eval(program,sem,true,Timeout.start(TIMEOUT)) })
+      (1 to WARMUP_RUNS).foreach( i => { print(".") ; machine.eval(program,sem,OUTPUT_PNG,Timeout.start(TIMEOUT)) })
       println()
       val t0 = System.nanoTime()
-      val result = machine.eval(program,sem,true,Timeout.start(TIMEOUT))
+      val result = machine.eval(program,sem,OUTPUT_PNG,Timeout.start(TIMEOUT))
       val t1 = System.nanoTime()
       if (result.timedOut) {
         println("<<TIMEOUT>>")
