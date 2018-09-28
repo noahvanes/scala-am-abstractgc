@@ -3,12 +3,24 @@ import scalaz._
 
 class CSchemeSemantics[Abs : IsCSchemeLattice, Addr : Address, Time : Timestamp, TID : ThreadIdentifier](primitives: Primitives[Addr, Abs])
     extends SchemeSemantics[Abs, Addr, Time](primitives) {
-  case class FrameJoin(env: Env) extends SchemeFrame
-  case class FrameCasIndex(variable: Identifier, eold: SchemeExp, enew: SchemeExp, env: Env) extends SchemeFrame
-  case class FrameCasOld(variable: Identifier, index: Option[Abs], enew: SchemeExp, env: Env) extends SchemeFrame
-  case class FrameCasNew(variable: Identifier, index: Option[Abs], enew: SchemeExp, old: Abs, env: Env) extends SchemeFrame
-  case class FrameAcquire(env: Env) extends SchemeFrame
-  case class FrameRelease(env: Env) extends SchemeFrame
+  case class FrameJoin(env: Env) extends SchemeFrame {
+    val refs = ???
+  }
+  case class FrameCasIndex(variable: Identifier, eold: SchemeExp, enew: SchemeExp, env: Env) extends SchemeFrame {
+    val refs = ???
+  }
+  case class FrameCasOld(variable: Identifier, index: Option[Abs], enew: SchemeExp, env: Env) extends SchemeFrame {
+    val refs = ???
+  }
+  case class FrameCasNew(variable: Identifier, index: Option[Abs], enew: SchemeExp, old: Abs, env: Env) extends SchemeFrame {
+    val refs = ???
+  }
+  case class FrameAcquire(env: Env) extends SchemeFrame {
+    val refs = ???
+  }
+  case class FrameRelease(env: Env) extends SchemeFrame {
+    val refs = ???
+  }
 
   override def stepEval(e: SchemeExp, env: Env, store: Sto, t: Time) = e match {
     case SchemeSpawn(exp, _) =>

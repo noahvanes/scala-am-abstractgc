@@ -7,7 +7,9 @@ import scalaz._
 class ANFSemantics[Abs : IsSchemeLattice, Addr : Address, Time : Timestamp](primitives: Primitives[Addr, Abs])
     extends Semantics[ANFExp, Abs, Addr, Time] {
   /** ANF Scheme only has three types of continuation frames: halt, let, and letrec */
-  trait ANFFrame extends Frame
+  trait ANFFrame extends Frame {
+    val refs = ???
+  }
   case class FrameLet(v: Identifier, body: ANFExp, env: Environment[Addr]) extends ANFFrame {
     override def toString = s"FrameLet($v)"
   }

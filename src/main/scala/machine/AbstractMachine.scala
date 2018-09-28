@@ -88,6 +88,7 @@ abstract class EvalKontMachine[Exp : Expression, Abs : JoinLattice, Addr : Addre
    */
   trait Control {
     def subsumes(that: Control): Boolean
+    val references: Set[Addr]
   }
   object Control {
     import org.json4s._
@@ -115,6 +116,7 @@ abstract class EvalKontMachine[Exp : Expression, Abs : JoinLattice, Addr : Addre
       case ControlEval(exp2, env2) => exp.equals(exp2) && env.subsumes(env2)
       case _ => false
     }
+    val references = env.addrs.toSet
   }
   /**
    * Or it can be a continuation component, where a value has been reached and a
@@ -126,6 +128,7 @@ abstract class EvalKontMachine[Exp : Expression, Abs : JoinLattice, Addr : Addre
       case ControlKont(v2) => JoinLattice[Abs].subsumes(v, v2)
       case _ => false
     }
+    val references = JoinLattice[Abs].references(v)
   }
   /**
    * Or an error component, in case an error is reached (e.g., incorrect number
@@ -134,5 +137,6 @@ abstract class EvalKontMachine[Exp : Expression, Abs : JoinLattice, Addr : Addre
   case class ControlError(err: SemanticError) extends Control {
     override def toString = s"${err}"
     def subsumes(that: Control) = that.equals(this)
+    val references = Set()
   }
 }

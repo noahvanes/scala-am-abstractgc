@@ -44,10 +44,18 @@ class ASchemeSemantics[Abs : IsASchemeLattice, Addr : Address, Time : ActorTimes
     extends SchemeSemantics[Abs, Addr, Time](primitives) {
   object ActorAction extends ActorActionHelpers[SchemeExp, Abs, Addr, Time, PID]
 
-  case class FrameSendTarget(pos: Position, message: Identifier, args: List[SchemeExp], env: Env) extends SchemeFrame
-  case class FrameSend(pos: Position, message: Identifier, target: Abs, argsv: List[Abs], args: List[SchemeExp], env: Env) extends SchemeFrame
-  case class FrameCreate(argsv: List[Abs], args: List[SchemeExp], exp: SchemeExp, env: Env) extends SchemeFrame
-  case class FrameBecome(argsv: List[Abs], args: List[SchemeExp], env: Env) extends SchemeFrame
+  case class FrameSendTarget(pos: Position, message: Identifier, args: List[SchemeExp], env: Env) extends SchemeFrame {
+    val refs = ???
+  }
+  case class FrameSend(pos: Position, message: Identifier, target: Abs, argsv: List[Abs], args: List[SchemeExp], env: Env) extends SchemeFrame {
+    val refs = ???
+  }
+  case class FrameCreate(argsv: List[Abs], args: List[SchemeExp], exp: SchemeExp, env: Env) extends SchemeFrame {
+    val refs = ???
+  }
+  case class FrameBecome(argsv: List[Abs], args: List[SchemeExp], env: Env) extends SchemeFrame {
+    val refs = ???
+  }
 
   override def atomicEval(e: SchemeExp, env: Env, store: Sto): Option[(Abs, Set[Effect[Addr]])] = e match {
     case a: SchemeActor => Some((IsASchemeLattice[Abs].injectActor[SchemeExp, Addr](a.name, a, env), Set()))

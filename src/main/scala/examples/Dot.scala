@@ -102,7 +102,9 @@ class DotLanguage[Addr : Address] {
   class DotSemantics[Abs : DotLattice, Time : Timestamp]
       extends Semantics[Term, Abs, Addr, Time] {
     type Sto = Store[Addr, Abs]
-    trait DotFrame extends Frame
+    trait DotFrame extends Frame {
+      val refs = ???
+    }
     case class FrameLet(x: Variable, u: Term, env: Env) extends DotFrame
 
     private def evalVar(x: Variable, env: Env, store: Sto): MayFail[Abs] =

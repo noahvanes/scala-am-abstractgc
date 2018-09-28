@@ -90,7 +90,9 @@ class LamSemantics[Abs : LamLattice, Addr : Address, Time : Timestamp]
   /** Shorcuct for the store */
   type Sto = Store[Addr, Abs]
   /** We need some frames */
-  trait LamFrame extends Frame
+  trait LamFrame extends Frame  {
+    val refs = ???
+  }
   /** One frame to remember the operand when we evaluate the operator */
   case class FrameArg(e: LamExp, env: Env) extends LamFrame
   /** And one frame to remember the operator value when we evaluate the operand */

@@ -66,6 +66,58 @@ case class BasicStore[Addr : Address, Abs : JoinLattice](content: Map[Addr, Abs]
     this.copy(content = content.filter({ case (a, v) => that.lookupBot(a) != v}))
 }
 
+/* WARNING: For efficiency, we currently assume that: refs(join(u,v)) = refs(u) U refs(v), although this assumption can easily be avoided */
+case class RefCountingStore[Addr : Address, Abs : JoinLattice](content: Map[Addr,Abs],
+                                                               counts: Map[Addr,Int] = Map[Addr,Int]().withDefaultValue(0),
+                                                               refs: Map[Addr,Set[Addr]] = Map[Addr,Set[Addr]]().withDefaultValue(Set())) extends Store[Addr,Abs] {
+
+    def keys = content.keys
+    def forall(p: ((Addr,Abs)) => Boolean) = content.forall(p)
+    def lookup(a: Addr) = content.get(a)
+    def lookupBot(a: Addr) = content.get(a).getOrElse(JoinLattice[Abs].bottom)
+
+    def incRefs(addrs: Iterable[Addr]): RefCountingStore[Addr,Abs] =
+      this.copy(counts = addrs.foldLeft(counts)((acc,ref) => acc + (ref -> (acc(ref) + 1))))
+
+    def decRefs(addrs: Iterable[Addr]): RefCountingStore[Addr,Abs] = {
+      val (updatedCounts,deleted) = addrs.foldLeft((counts,List[Addr]()))((acc,ref) => decRefUpdate(ref,acc._1,acc._2))
+      this.copy(content=content--deleted, counts=updatedCounts--deleted, refs=refs--deleted)
+    }
+
+    def decRefUpdate(adr: Addr, counts: Map[Addr,Int], deleted: List[Addr]): (Map[Addr,Int],List[Addr]) = {
+      val newCount = counts(adr) - 1
+      if (newCount == 0) {
+        refs(adr).foldLeft((counts, adr :: deleted))((acc,ref) => decRefUpdate(ref,acc._1,acc._2))
+      } else {
+        (counts + (adr -> newCount), deleted)
+      }
+    }
+
+    def extend(adr: Addr, v: Abs) = content.get(adr) match {
+      case None => {
+        val vRefs = JoinLattice[Abs].references(v)
+        RefCountingStore(content+(adr->v), vRefs.foldLeft(counts)((acc,ref)=>acc+(ref->(counts(ref)+1))), refs+(adr->vRefs))
+      }
+      case Some(u) => {
+        val uRefs = refs(adr)
+        val vRefs = JoinLattice[Abs].references(v)
+        val updatedContent = content + (adr -> JoinLattice[Abs].join(u,v))
+        val (updatedCounts,updatedAdrRefs) = vRefs.foldLeft((counts,uRefs))((acc,ref) => {
+          if (uRefs.contains(ref)) { acc } else { (acc._1 + (ref->(counts(ref)+1)), acc._2 + ref) }
+        })
+        RefCountingStore(updatedContent, updatedCounts, refs + (adr->updatedAdrRefs))
+      }
+    }
+
+    def update(a: Addr, v: Abs) = extend(a,v)
+    def updateOrExtend(a: Addr, v: Abs) = extend(a,v)
+
+    /* TODO */
+    def join(that: Store[Addr,Abs]) = throw new Exception("NYI: RefCountingStore.join(Store[Addr,Abs])")
+    def subsumes(that: Store[Addr,Abs]) = throw new Exception("NYI: RefCountingStore.subsumes(Store[Addr,Abs])")
+    def diff(that: Store[Addr,Abs]) = throw new Exception("NYI: RefCountingStore.diff(Store[Addr,Abs])")
+  }
+
 /** Store that combines a default read-only store with a writable store */
 case class CombinedStore[Addr : Address, Abs : JoinLattice](ro: Store[Addr, Abs], w: Store[Addr, Abs]) extends Store[Addr, Abs] {
   def keys = ro.keys.toSet ++ w.keys.toSet
@@ -164,6 +216,7 @@ object Store {
   } else {
     BasicStore(values.toMap)
   }
+  def refCountStore[Addr:Address,Abs:JoinLattice](values: Iterable[(Addr,Abs)]): RefCountingStore[Addr,Abs] = new RefCountingStore[Addr,Abs](values.toMap)
 
   implicit def monoid[Addr : Address, Abs : JoinLattice]: Monoid[Store[Addr, Abs]] =
     new Monoid[Store[Addr, Abs]] {

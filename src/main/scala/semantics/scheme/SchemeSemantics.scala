@@ -11,29 +11,67 @@ class BaseSchemeSemantics[V : IsSchemeLattice, Addr : Address, Time : Timestamp]
   type Sto = Store[Addr, V]
   type Actions = Set[Action[SchemeExp, V, Addr]]
 
+  private def vrefs(v: V): Set[Addr] = JoinLattice[V].references(v)
+
   trait SchemeFrame extends Frame {
     override def toString = s"${this.getClass.getSimpleName}"
   }
-  case class FrameFuncallOperator(fexp: SchemeExp, args: List[SchemeExp], env: Env) extends SchemeFrame
+  case class FrameFuncallOperator(fexp: SchemeExp, args: List[SchemeExp], env: Env) extends SchemeFrame {
+    val refs = env.addrs.toSet
+  }
   case class FrameFuncallOperands(f: V, fexp: SchemeExp, cur: SchemeExp, args: List[(SchemeExp, V)],
-    toeval: List[SchemeExp], env: Env) extends SchemeFrame
-  case class FrameIf(cons: SchemeExp, alt: SchemeExp, env: Env) extends SchemeFrame
+    toeval: List[SchemeExp], env: Env) extends SchemeFrame {
+      val refs = vrefs(f) ++ args.flatMap(arg => vrefs(arg._2)) ++ env.addrs.toSet
+  }
+  case class FrameIf(cons: SchemeExp, alt: SchemeExp, env: Env) extends SchemeFrame {
+    val refs = env.addrs.toSet
+  }
   case class FrameLet(variable: Identifier, bindings: List[(Identifier, V)],
-    toeval: List[(Identifier, SchemeExp)], body: List[SchemeExp], env: Env) extends SchemeFrame
-  case class FrameLetStar(variable: Identifier, bindings: List[(Identifier, SchemeExp)], body: List[SchemeExp], env: Env) extends SchemeFrame
-  case class FrameLetrec(addr: Addr, bindings: List[(Addr, SchemeExp)], body: List[SchemeExp], env: Env) extends SchemeFrame
-  case class FrameSet(variable: Identifier, env: Env) extends SchemeFrame
-  case class FramePrimSet(adr : Addr) extends SchemeFrame
-  case class FrameBegin(rest: List[SchemeExp], env: Env) extends SchemeFrame
-  case class FrameCond(cons: List[SchemeExp], clauses: List[(SchemeExp, List[SchemeExp])], env: Env) extends SchemeFrame
-  case class FrameCase(clauses: List[(List[SchemeValue], List[SchemeExp])], default: List[SchemeExp], env: Env) extends SchemeFrame
-  case class FrameAnd(rest: List[SchemeExp], env: Env) extends SchemeFrame
-  case class FrameOr(rest: List[SchemeExp], env: Env) extends SchemeFrame
-  case class FrameDefine(variable: Identifier, env: Env) extends SchemeFrame
-  case class FrameDoInit(vars: List[(Identifier, V, Option[SchemeExp])], variable: Identifier, step: Option[SchemeExp], toeval: List[(Identifier, SchemeExp, Option[SchemeExp])], test: SchemeExp, finals: List[SchemeExp], commands: List[SchemeExp], env: Env) extends SchemeFrame
-  case class FrameDoBody(toeval: List[SchemeExp], vars: List[(Identifier, V, Option[SchemeExp])], test: SchemeExp, finals: List[SchemeExp], commands: List[SchemeExp], env: Env) extends SchemeFrame
-  case class FrameDoStep(vars: List[(Identifier, V, Option[SchemeExp])], variable: Identifier, step: Option[SchemeExp], toeval: List[(Identifier, V, Option[SchemeExp])], test: SchemeExp, finals: List[SchemeExp], commands: List[SchemeExp], env: Env) extends SchemeFrame
-  case class FrameDoTest(vars: List[(Identifier, V, Option[SchemeExp])], test: SchemeExp, finals: List[SchemeExp], commands: List[SchemeExp], env: Env) extends SchemeFrame
+    toeval: List[(Identifier, SchemeExp)], body: List[SchemeExp], env: Env) extends SchemeFrame {
+    val refs = env.addrs.toSet ++ bindings.flatMap(bnd => vrefs(bnd._2))
+  }
+  case class FrameLetStar(variable: Identifier, bindings: List[(Identifier, SchemeExp)], body: List[SchemeExp], env: Env) extends SchemeFrame {
+    val refs = env.addrs.toSet
+  }
+  case class FrameLetrec(addr: Addr, bindings: List[(Addr, SchemeExp)], body: List[SchemeExp], env: Env) extends SchemeFrame {
+    val refs = env.addrs.toSet ++ bindings.map(bnd => bnd._1) + addr
+  }
+  case class FrameSet(variable: Identifier, env: Env) extends SchemeFrame {
+    val refs = env.addrs.toSet
+  }
+  case class FramePrimSet(adr : Addr) extends SchemeFrame {
+    val refs = Set(adr)
+  }
+  case class FrameBegin(rest: List[SchemeExp], env: Env) extends SchemeFrame {
+    val refs = env.addrs.toSet
+  }
+  case class FrameCond(cons: List[SchemeExp], clauses: List[(SchemeExp, List[SchemeExp])], env: Env) extends SchemeFrame {
+    val refs = env.addrs.toSet
+  }
+  case class FrameCase(clauses: List[(List[SchemeValue], List[SchemeExp])], default: List[SchemeExp], env: Env) extends SchemeFrame {
+    val refs = env.addrs.toSet
+  }
+  case class FrameAnd(rest: List[SchemeExp], env: Env) extends SchemeFrame {
+    val refs = env.addrs.toSet
+  }
+  case class FrameOr(rest: List[SchemeExp], env: Env) extends SchemeFrame {
+    val refs = env.addrs.toSet
+  }
+  case class FrameDefine(variable: Identifier, env: Env) extends SchemeFrame {
+    val refs = env.addrs.toSet
+  }
+  case class FrameDoInit(vars: List[(Identifier, V, Option[SchemeExp])], variable: Identifier, step: Option[SchemeExp], toeval: List[(Identifier, SchemeExp, Option[SchemeExp])], test: SchemeExp, finals: List[SchemeExp], commands: List[SchemeExp], env: Env) extends SchemeFrame {
+    val refs = env.addrs.toSet ++ vars.flatMap(v => vrefs(v._2))
+  }
+  case class FrameDoBody(toeval: List[SchemeExp], vars: List[(Identifier, V, Option[SchemeExp])], test: SchemeExp, finals: List[SchemeExp], commands: List[SchemeExp], env: Env) extends SchemeFrame {
+    val refs = env.addrs.toSet ++ vars.flatMap(v => vrefs(v._2))
+  }
+  case class FrameDoStep(vars: List[(Identifier, V, Option[SchemeExp])], variable: Identifier, step: Option[SchemeExp], toeval: List[(Identifier, V, Option[SchemeExp])], test: SchemeExp, finals: List[SchemeExp], commands: List[SchemeExp], env: Env) extends SchemeFrame {
+    val refs = env.addrs.toSet ++ vars.flatMap(v => vrefs(v._2)) ++ toeval.flatMap(v => vrefs(v._2))
+  }
+  case class FrameDoTest(vars: List[(Identifier, V, Option[SchemeExp])], test: SchemeExp, finals: List[SchemeExp], commands: List[SchemeExp], env: Env) extends SchemeFrame {
+    val refs = env.addrs.toSet ++ vars.flatMap(v => vrefs(v._2))
+  }
 
   protected def evalBody(body: List[SchemeExp], env: Env, store: Sto): Actions = body match {
     case Nil => Action.value(IsSchemeLattice[V].inject(false), store)
