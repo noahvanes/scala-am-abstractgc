@@ -21,12 +21,18 @@ object ClassicalAddress extends AddressWrapper {
   trait A
   case class VariableAddress[Time : Timestamp](id: Identifier, t: Time) extends A {
     override def toString = s"@$id-$t"
+    lazy val storedHash = (id,t).hashCode()
+    override def hashCode = storedHash
   }
   case class PrimitiveAddress(name: String) extends A {
     override def toString = s"@$name"
+    lazy val storedHash = name.hashCode()
+    override def hashCode = storedHash
   }
   case class CellAddress[Exp : Expression, Time : Timestamp](exp: Exp, t: Time) extends A {
     override def toString = s"@$exp-$t"
+    lazy val storedHash = (exp,t).hashCode()
+    override def hashCode = storedHash
   }
 
   implicit val isAddress = new Address[A] {

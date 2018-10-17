@@ -44,8 +44,10 @@ abstract class Semantics[Exp : Expression, Abs : JoinLattice, Addr : Address, Ti
 
   /** Defines the elements in the initial environment/store */
   def initialBindings: Iterable[(String, Addr, Abs)] = List()
-  def initialEnv: Iterable[(String, Addr)] = initialBindings.map({ case (name, a, _) => (name, a) })
-  def initialStore: Iterable[(Addr, Abs)] = initialBindings.map({ case (_, a, v) => (a, v) })
+  val initEnv = initialBindings.map({ case (name, a, _) => (name, a) })
+  val initSto = initialBindings.map({ case (_, a, v) => (a, v) })
+  def initialEnv: Iterable[(String, Addr)] = initEnv
+  def initialStore: Iterable[(Addr, Abs)] = initSto
 
   object Action extends ActionHelpers[Exp, Abs, Addr]
 

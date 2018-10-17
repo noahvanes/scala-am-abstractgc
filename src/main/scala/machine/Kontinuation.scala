@@ -1,4 +1,5 @@
 import scalaz.Scalaz._
+import Util.MapStrict
 
 trait Frame {
   def subsumes(that: Frame): Boolean = {
@@ -7,6 +8,7 @@ trait Frame {
   def references[Addr : Address] = refs.asInstanceOf[Set[Addr]]
   val refs: Set[_]
 }
+
 trait KontAddress[A]
 
 case class Kont[KontAddr: KontAddress](frame: Frame, next: KontAddr) {
@@ -14,6 +16,8 @@ case class Kont[KontAddr: KontAddress](frame: Frame, next: KontAddr) {
     case Kont(frame2, next2) => frame.subsumes(frame2) && next.equals(next2)
     case _ => false
   }
+  lazy val storedHash = (frame,next).hashCode()
+  override def hashCode = storedHash
 }
 
 abstract class KontStore[KontAddr : KontAddress] {
@@ -47,40 +51,34 @@ case class BasicKontStore[KontAddr : KontAddress](content: Map[KontAddr, Set[Kon
     })
 }
 
-case class GCKontStore[KontAddr : KontAddress](root: KontAddr, content: Map[KontAddr, Set[Kont[KontAddr]]], refs: Map[KontAddr,Set[KontAddr]]) extends KontStore[KontAddr] {
+case class GCKontStore[Addr : Address, KontAddr : KontAddress](content: Map[KontAddr, Set[Kont[KontAddr]]] = Map[KontAddr, Set[Kont[KontAddr]]](),
+                                                               refs: Map[KontAddr,Set[KontAddr]] = Map[KontAddr,Set[KontAddr]]().withDefaultValue(Set()),
+                                                               vrefs: Map[KontAddr,Set[Addr]] = Map[KontAddr,Set[Addr]]().withDefaultValue(Set())) extends KontStore[KontAddr] {
 
-  def changeRoot(r: KontAddr): GCKontStore[KontAddr] = this.copy(root = r)
+  def mark(adr: KontAddr, marked: Set[KontAddr], addrs: Set[Addr]): (Set[KontAddr],Set[Addr]) =
+    refs(adr).foldLeft(marked+adr, addrs++vrefs(adr))((acc,ref) => {
+      if (acc._1.contains(ref)) { acc } else { mark(ref,acc._1,acc._2) }
+    })
 
-  def mark(adr: KontAddr, marked: Set[KontAddr]): Set[KontAddr] =
-    refs(adr).foldLeft(marked + adr)((acc,ref) => if (acc.contains(ref)) { acc } else { acc ++ mark(ref,acc) })
-
-  def collect(): GCKontStore[KontAddr] = {
-    val marked = mark(root,Set())
-    val updatedContent = content.filterKeys(marked)
-    val updatedRefs = refs.filterKeys(marked).withDefaultValue(Set())
-    this.copy(content = updatedContent, refs = updatedRefs)
+  def collect(root: KontAddr): (GCKontStore[Addr,KontAddr],Set[Addr]) = {
+    val (marked,addrs) = mark(root,Set(),Set())
+    val updatedContent = content.filterKeysStrict(marked)
+    val updatedRefs = refs.filterKeysStrict(marked).withDefaultValue(Set())
+    val updatedVRefs = vrefs.filterKeysStrict(marked).withDefaultValue(Set())
+    (GCKontStore(updatedContent, updatedRefs, updatedVRefs), addrs)
   }
 
   def keys = content.keys
   def lookup(adr: KontAddr) = content(adr)
   def forall(p: ((KontAddr, Set[Kont[KontAddr]])) => Boolean) = content.forall(p)
 
-  def extendCollect(adr: KontAddr, kont: Kont[KontAddr]): GCKontStore[KontAddr] =
-    if (content.contains(adr)) {  // risk of zombie creation
-      collect().extend(adr,kont)
-    } else {
-      extend(adr,kont)
-    }
-
-  def extend(adr: KontAddr, kont: Kont[KontAddr]): GCKontStore[KontAddr] = {
+  def extend(adr: KontAddr, kont: Kont[KontAddr]): GCKontStore[Addr,KontAddr] = {
     val adrRefs = refs(adr)
+    val adrVRefs = vrefs(adr)
     val adrCnts = content.get(adr).getOrElse(Set())
-    if (adrRefs.contains(kont.next)) {
-      this.copy(content = content + (adr -> (adrCnts + kont)))
-    } else {
-      this.copy(content = content + (adr -> (adrCnts + kont)),
-                refs = refs + (adr -> (adrRefs + kont.next)))
-    }
+    this.copy(content = content + (adr -> (adrCnts + kont)),
+              refs = refs + (adr -> (adrRefs + kont.next)),
+              vrefs = vrefs + (adr -> (adrVRefs ++ kont.frame.references)))
   }
 
   /* TODO */
@@ -88,50 +86,70 @@ case class GCKontStore[KontAddr : KontAddress](root: KontAddr, content: Map[Kont
   def join(that: KontStore[KontAddr]) = throw new Exception("NYI: GCKontStore.join(KontStore[KontAddr])")
   def subsumes(that: KontStore[KontAddr]) = throw new Exception("NYI: GCKontStore.subsumes(KontStore[KontAddr])")
 
+  /* PERFORMANCE OPTIMIZATION */
+  override def equals(that: Any): Boolean = that match {
+    case kstore : GCKontStore[Addr,KontAddr] => this.content == kstore.content
+    case _ => false
+  }
+
+  lazy val storedHashCode = content.hashCode
+  override def hashCode = storedHashCode
 }
 
 case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress](content: Map[KontAddr, Set[Kont[KontAddr]]] = Map[KontAddr, Set[Kont[KontAddr]]](),
                                                                         counts: Map[KontAddr,Int] = Map[KontAddr,Int]().withDefaultValue(0),
                                                                         refs: Map[KontAddr,Set[KontAddr]] = Map[KontAddr,Set[KontAddr]]().withDefaultValue(Set()),
-                                                                        vrefs: Map[KontAddr,Set[Addr]] = Map[KontAddr,Set[Addr]]().withDefaultValue(Set())) extends KontStore[KontAddr] {
+                                                                        vrefs: Map[KontAddr,Set[Addr]] = Map[KontAddr,Set[Addr]]().withDefaultValue(Set()),
+                                                                        hc: Int = 0) extends KontStore[KontAddr] {
 
-  private def decRefUpdate(adr: KontAddr, counts: Map[KontAddr,Int], deleted: List[KontAddr], decremented: List[Addr]): (Map[KontAddr,Int],List[KontAddr],List[Addr]) = {
+  private def decRefUpdate(adr: KontAddr, counts: Map[KontAddr,Int], deleted: List[KontAddr], decremented: List[Addr], candidates: Set[KontAddr]): (Map[KontAddr,Int],List[KontAddr],List[Addr],Set[KontAddr]) = {
     val newCount = counts(adr) - 1
     if (newCount == 0) {
-      refs(adr).foldLeft((counts, adr :: deleted, decremented++vrefs(adr)))((acc,ref) => decRefUpdate(ref,acc._1,acc._2,acc._3))
+      refs(adr).foldLeft((counts, adr :: deleted, decremented++vrefs(adr), candidates))((acc,ref) => decRefUpdate(ref,acc._1,acc._2,acc._3,acc._4))
     } else {
-      (counts + (adr -> newCount), deleted, decremented)
+      (counts + (adr -> newCount), deleted, decremented, candidates + adr)
     }
   }
 
-  def decRef(adr: KontAddr): (RefCountingKontStore[Addr,KontAddr],List[Addr]) = {
-    val (updatedCounts,deleted,decremented) = decRefUpdate(adr,counts,List(),List())
-    (RefCountingKontStore(content--deleted, updatedCounts--deleted, refs--deleted, vrefs--deleted), decremented)
+  private def decRef(adr: KontAddr): (RefCountingKontStore[Addr,KontAddr],List[Addr],Set[KontAddr]) = {
+    val (updatedCounts,deleted,addrs,decremented) = decRefUpdate(adr,counts,List(),List(),Set())
+    val updatedHC = deleted.foldLeft(hc)((acc,ref) => {
+      val konts = content.get(ref).getOrElse(Iterable.empty)
+      konts.foldLeft(acc)((acc2,cnt) => acc2 - cnt.hashCode())
+    })
+    (RefCountingKontStore(content--deleted, updatedCounts--deleted, refs--deleted, vrefs--deleted, updatedHC), addrs, decremented--deleted)
   }
 
-  def incRef(adr: KontAddr): RefCountingKontStore[Addr,KontAddr] =
+  private def incRef(adr: KontAddr): RefCountingKontStore[Addr,KontAddr] =
     this.copy(counts = counts + (adr -> (counts(adr) + 1)))
+
+  def changeRoot(oldR: KontAddr, newR: KontAddr): (RefCountingKontStore[Addr,KontAddr],Iterable[Addr]) = if (oldR == newR) { (this, Iterable.empty) } else {
+    val (kstore,addrs,decremented) = incRef(newR).decRef(oldR)
+    val potentialGCR = decremented - newR
+    (kstore,addrs)
+  }
 
   def keys = content.keys
   def lookup(adr: KontAddr) = content(adr)
   def forall(p: ((KontAddr, Set[Kont[KontAddr]])) => Boolean) = content.forall(p)
 
   def extend(adr: KontAddr, kont: Kont[KontAddr]) = extendRC(adr,kont)._1
-
   def extendRC(adr: KontAddr, kont: Kont[KontAddr]): (RefCountingKontStore[Addr,KontAddr],Iterable[Addr]) = content.get(adr) match {
     case None => {
       val kontRefs = kont.frame.references
-      (RefCountingKontStore(content+(adr->Set(kont)), counts+(kont.next->(counts(kont.next)+1)), refs+(adr->Set(kont.next)), vrefs+(adr->kontRefs)), kontRefs)
+      (RefCountingKontStore(content+(adr->Set(kont)), counts+(kont.next->(counts(kont.next)+1)), refs+(adr->Set(kont.next)), vrefs+(adr->kontRefs), hc+kont.hashCode()), kontRefs)
     }
+    case Some(konts) if konts.contains(kont) => (this, Iterable.empty)
     case Some(konts) => {
+      val updatedContent = content + (adr -> (konts + kont))
+      val updatedHC = hc + kont.hashCode()
       val adrRefs = refs(adr)
       val adrVRefs = vrefs(adr)
-      val updatedContent = content + (adr -> (konts + kont))
       val (updatedCounts,updatedRefs) = if (adrRefs.contains(kont.next)) { (counts,refs) } else { (counts+(kont.next->(counts(kont.next)+1)), refs+(adr->(adrRefs+kont.next))) }
       val (updatedVRefs,added) = kont.frame.references.foldLeft((adrVRefs,List[Addr]()))((acc,ref) => {
         if (adrVRefs.contains(ref)) { acc } else (acc._1 + ref, ref :: acc._2)
       })
-      (RefCountingKontStore(updatedContent,updatedCounts,updatedRefs, vrefs + (adr -> updatedVRefs)), added)
+      (RefCountingKontStore(updatedContent,updatedCounts,updatedRefs, vrefs + (adr -> updatedVRefs), updatedHC), added)
     }
   }
 
@@ -139,6 +157,14 @@ case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress](content:
 
   def join(that: KontStore[KontAddr]) = throw new Exception("NYI: RefCountingKontStore.join(KontStore[Addr,KontAddr])")
   def subsumes(that: KontStore[KontAddr]) = throw new Exception("NYI: RefCountingKontStore.subsumes(KontStore[Addr,KontAddr])")
+
+  /* PERFORMANCE OPTIMIZATION */
+  override def equals(that: Any): Boolean = that match {
+    case kstore : RefCountingKontStore[Addr,KontAddr] => this.content == kstore.content
+    case _ => false
+  }
+
+  override def hashCode = hc
 }
 
 case class TimestampedKontStore[KontAddr : KontAddress](content: Map[KontAddr, Set[Kont[KontAddr]]], timestamp: Int) extends KontStore[KontAddr] {
@@ -186,6 +212,6 @@ object KontStore {
     new BasicKontStore[KontAddr](Map())
   def refCountStore[Addr : Address, KontAddr : KontAddress]: RefCountingKontStore[Addr,KontAddr] =
     new RefCountingKontStore[Addr,KontAddr]
-  def gcStore[KontAddr : KontAddress](root: KontAddr): GCKontStore[KontAddr] =
-    new GCKontStore[KontAddr](root, Map(), Map().withDefaultValue(Set()))
+  def gcStore[Addr : Address, KontAddr : KontAddress]: GCKontStore[Addr,KontAddr] =
+    new GCKontStore[Addr,KontAddr](Map(), Map().withDefaultValue(Set()), Map().withDefaultValue(Set()))
 }

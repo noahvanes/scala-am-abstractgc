@@ -23,18 +23,24 @@ abstract class Environment[Addr : Address] {
 }
 
 /** Basic mapping from names to addresses */
-case class BasicEnvironment[Addr : Address](content: Map[String, Addr]) extends Environment[Addr] {
+case class BasicEnvironment[Addr : Address](content: Map[String, Addr], hc: Int = 0, allAddrs: List[Addr] = List()) extends Environment[Addr] {
   override def toString = content.filter({ case (_, a) => !Address[Addr].isPrimitive(a) }).toString
   def keys = content.keys
-  def addrs = content.values
+  def addrs = allAddrs
   def forall(p: ((String, Addr)) => Boolean) = content.forall(p)
   def lookup(name: String) = content.get(name)
-  def extend(name: String, a: Addr) = this.copy(content = content + (name -> a))
-  def extend(values: Iterable[(String, Addr)]) = this.copy(content = content ++ values)
+  def extend(name: String, a: Addr) = this.copy(content = content + (name -> a), hc = (hc,a).hashCode(), allAddrs = a :: allAddrs)
+  def extend(values: Iterable[(String, Addr)]) = this.copy(content = content ++ values, hc = ???, allAddrs = values.map(_._2).toList ++ allAddrs)
   def trim(keys: Iterable[String]) = keys.foldLeft(BasicEnvironment[Addr](Map()))((acc,key) => lookup(key) match {
     case Some(adr) => acc.extend(key,adr)
     case None => throw new Exception(s"shouldn't happen: trim: not a subset of the environment (at key ${key} in env ${this})")
   })
+  /* PERFORMANCE OPTIMIZATION */
+  override def equals(that: Any) = that match {
+    case env : BasicEnvironment[Addr] => content == env.content
+    case _ => false
+  }
+  override def hashCode = hc
 }
 
 /** Environment that combines a default read-only environment with a writable environment */

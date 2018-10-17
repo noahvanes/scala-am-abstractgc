@@ -4,6 +4,8 @@ import SchemeOps._
 import UnaryOperator._
 import BinaryOperator._
 
+import scala.runtime.ScalaRunTime
+
 class MakeSchemeLattice[
   S : StringLattice,
   B : BoolLattice,
@@ -12,7 +14,10 @@ class MakeSchemeLattice[
   C : CharLattice,
   Sym : SymbolLattice
 ](supportsCounting: Boolean) extends SchemeLattice {
-  sealed trait Value
+  sealed trait Value extends Product { 
+    lazy val storedHash = ScalaRunTime._hashCode(this)
+    override def hashCode = storedHash
+  }
   case object Bot extends Value {
     override def toString = "⊥"
   }
@@ -422,8 +427,12 @@ class MakeSchemeLattice[
   sealed trait L
   case class Element(v: Value) extends L {
     override def toString = v.toString
+    lazy val storedHash = v.hashCode
+    override def hashCode = storedHash
   }
   case class Elements(vs: Set[Value]) extends L {
+    lazy val storedHash = vs.hashCode
+    override def hashCode = storedHash
     override def toString = "{" + vs.mkString(",") + "}"
   }
   val boolOrMonoid = new Monoid[Boolean] {

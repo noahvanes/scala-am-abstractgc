@@ -6,11 +6,11 @@ object Main {
   val INPUT_DIR = "test/"
   val OUTPUT_DIR = "/Users/nvanes/Desktop/outputs/"
   val OUTPUT_PNG = false
-  val WARMUP_RUNS = 30
-  val TIMEOUT = Duration(60, "seconds")
+  val WARMUP_RUNS = 50
+  val TIMEOUT = Duration(7200, "seconds")
 
-  val bounded = new BoundedInteger(1)
-  val lattice = new MakeSchemeLattice[Type.S, Concrete.B, Type.I, Type.F, Type.C, Type.Sym](false)
+  val bounded = new BoundedInteger(5)
+  val lattice = new MakeSchemeLattice[Type.S, Concrete.B, bounded.I, Type.F, Type.C, Type.Sym](false)
   val address = ClassicalAddress
   val time = ZeroCFA
   implicit val isTimestamp = time.isTimestamp
@@ -24,7 +24,7 @@ object Main {
   def main(args: Array[String]): Unit = {
     val current = "primtest"
     //benchmark(current,NoGC)
-    benchmark(current,ClassicalGC)
+    //benchmark(current,ClassicalGC)
     benchmark(current,RefCounting)
   }
 
@@ -47,10 +47,11 @@ object Main {
       val result = machine.eval(program,sem,OUTPUT_PNG,Timeout.start(TIMEOUT))
       val t1 = System.nanoTime()
       if (result.timedOut) {
-        println("<<TIMEOUT>>")
+        println(s"<<TIMEOUT after ${result.numberOfStates} states")
       } else {
         println(s"states: ${result.numberOfStates}")
         println(s"elapsed: ${(t1-t0)/1000000}ms")
+        println(s"rate: ${result.numberOfStates/((t1-t0)/1000000)} states/ms")
       }
       if (OUTPUT_PNG) { result.toPng(OUTPUT_DIR + benchName + ".png") }
       println(s"<<< FINISHED BENCHMARK ${benchName}")

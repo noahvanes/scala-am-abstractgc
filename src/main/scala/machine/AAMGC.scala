@@ -28,9 +28,12 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
   trait KontAddr
   case class NormalKontAddress(exp: Exp, time: Time) extends KontAddr {
     override def toString = s"NormalKontAddress($exp)"
+    lazy val storedHashCode = (exp,time).hashCode
+    override def hashCode = storedHashCode
   }
   case object HaltKontAddress extends KontAddr {
     override def toString = "HaltKontAddress"
+    override def hashCode = 0
   }
 
   object KontAddr {
@@ -47,8 +50,11 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
    * continuation store, and an address representing where the current
    * continuation lives.
    */
-  case class State(control: Control, store: Store[Addr, Abs], kstore: GCKontStore[KontAddr], a: KontAddr, t: Time) {
+  case class State(control: Control, store: GCStore[Addr, Abs], kstore: GCKontStore[Addr,KontAddr], a: KontAddr, t: Time) {
     override def toString = control.toString
+
+    lazy val storedHashCode = (control, store, kstore, a, t).hashCode()
+    override def hashCode = storedHashCode
 
     /**
      * Checks whether a states subsumes another, i.e., if it is "bigger". This
@@ -63,35 +69,41 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
      * Semantics.scala), in order to generate a set of states that succeeds this
      * one.
      */
-    private def integrate(adr: KontAddr, actions: Set[Action[Exp, Abs, Addr]]): Set[State] =
-      actions.flatMap({
+    private def integrate(adr: KontAddr, actions: Set[Action[Exp, Abs, Addr]], sem: Semantics[Exp, Abs, Addr, Time]): Iterable[State] =
+      actions.toIterable.map({
         /* When a value is reached, we go to a continuation state */
-        case ActionReachedValue(v, store, _) => Set(State(ControlKont(v), store, kstore.changeRoot(adr), adr, Timestamp[Time].tick(t)))
+        case ActionReachedValue(v, store : GCStore[Addr, Abs], _) => State(ControlKont(v), store, kstore, adr, Timestamp[Time].tick(t)).collect(sem)
         /* When a continuation needs to be pushed, push it in the continuation store */
-        case ActionPush(frame, e, env, store, _) => {
+        case ActionPush(frame, e, env, store : GCStore[Addr, Abs], _) => {
           val next = NormalKontAddress(e, t)
-          Set(State(ControlEval(e, env), store, kstore.extend(next, Kont(frame, adr)).changeRoot(next), next, Timestamp[Time].tick(t)))
+          State(ControlEval(e, env), store, kstore.extend(next, Kont(frame, adr)), next, Timestamp[Time].tick(t)).collect(sem)
         }
         /* When a value needs to be evaluated, we go to an eval state */
-        case ActionEval(e, env, store, _) => Set(State(ControlEval(e, env), store, kstore.changeRoot(adr), adr, Timestamp[Time].tick(t)))
+        case ActionEval(e, env, store : GCStore[Addr, Abs], _) => State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t)).collect(sem)
         /* When a function is stepped in, we also go to an eval state */
-        case ActionStepIn(fexp, _, e, env, store, _, _) => Set(State(ControlEval(e, env), store, kstore.changeRoot(adr), adr, Timestamp[Time].tick(t, fexp)))
+        case ActionStepIn(fexp, _, e, env, store : GCStore[Addr, Abs], _, _) => State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t, fexp)).collect(sem)
         /* When an error is reached, we go to an error state */
-        case ActionError(err) => Set(State(ControlError(err), store, kstore.changeRoot(adr), adr, Timestamp[Time].tick(t)))
+        case ActionError(err) => State(ControlError(err), store, kstore, adr, Timestamp[Time].tick(t)).collect(sem)
       })
 
     /**
      * Computes the set of states that follow the current state
      */
-    def step(sem: Semantics[Exp, Abs, Addr, Time]): Set[State] = control match {
+    def step(sem: Semantics[Exp, Abs, Addr, Time]): Iterable[State] = control match {
       /* In a eval state, call the semantic's evaluation method */
-      case ControlEval(e, env) => integrate(a, sem.stepEval(e, env, store, t))
+      case ControlEval(e, env) => integrate(a, sem.stepEval(e, env, store, t), sem)
       /* In a continuation state, call the semantics' continuation method */
-      case ControlKont(v) => kstore.lookup(a).flatMap({
-        case Kont(frame, next) => integrate(next, sem.stepKont(v, frame, store, t))
+      case ControlKont(v) => kstore.lookup(a).toIterable.flatMap({
+        case Kont(frame, next) => integrate(next, sem.stepKont(v, frame, store, t), sem)
       })
       /* In an error state, the state is not able to make a step */
-      case ControlError(_) => Set()
+      case ControlError(_) => Iterable.empty
+    }
+
+    private def collect(sem: Semantics[Exp,Abs,Addr,Time]): State = {
+      val (kstore1,addrs) = kstore.collect(a)
+      val store1 = store.collect(control.references ++ sem.initialEnv.map(_._2) ++ addrs)
+      this.copy(kstore = kstore1, store = store1)
     }
 
     def stepAnalysis[L](analysis: Analysis[L, Exp, Abs, Addr, Time], current: L): L = control match {
@@ -119,7 +131,7 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
   object State {
     def inject(exp: Exp, env: Iterable[(String, Addr)], store: Iterable[(Addr, Abs)]) =
       State(ControlEval(exp, Environment.initial[Addr](env)),
-        Store.initial[Addr, Abs](store), KontStore.gcStore[KontAddr](HaltKontAddress), HaltKontAddress, Timestamp[Time].initial(""))
+        Store.gcStore[Addr, Abs](store), KontStore.gcStore[Addr,KontAddr], HaltKontAddress, Timestamp[Time].initial(""))
     import scala.language.implicitConversions
 
     implicit val graphNode = new GraphNode[State, Unit] {
@@ -162,59 +174,20 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
    * timeout can also be given.
    */
   def eval(exp: Exp, sem: Semantics[Exp, Abs, Addr, Time], graph: Boolean, timeout: Timeout): Output = {
-    import scala.language.higherKinds
-    /* The fixpoint computation loop. @param todo is the set of states that need to
-     * be visited (the worklist). @param visited is the set of states that have
-     * already been visited. @param halted is the set of "final" states, where
-     * the program has finished its execution (it is only needed so that it can
-     * be included in the output, to return the final values computed by the
-     * program). @param graph is the current graph that has been computed (if we
-     * need to compute it). If we don't need to compute the graph, @param graph
-     * is None (see type definition for G above in this file).  Note that the
-     * worklist and visited set are "parameterized" and not tied to concrete
-     * implementations; but they are basically similar as Set[State].
-     */
-    @scala.annotation.tailrec
-    def loop[WL[_] : WorkList, VS[_] : VisitedSet](todo: WL[State], visited: VS[State], halted: Set[State], graph: G): AAMOutput = {
-      if (timeout.reached) {
-        /* If we exceeded the maximal time allowed, we stop the evaluation and return what we computed up to now */
-        AAMOutput(halted, VisitedSet[VS].size(visited), timeout.time, graph, true)
-      } else {
-        /* Pick an element from the worklist */
-        WorkList[WL].pick(todo) match {
-          /* We have an element, hence pick returned a pair consisting of the state to visit, and the new worklist */
-          case Some((s, newTodo)) =>
-            if (VisitedSet[VS].contains(visited, s)) {
-              /* If we already visited the state, or if it is subsumed by another already
-               * visited state (i.e., we already visited a state that contains
-               * more information than this one), we ignore it. The subsumption
-               * part reduces the number of visited states. */
-              loop(newTodo, visited, halted, graph)
-            } else if (s.halted) {
-              /* If the state is a final state, add it to the list of final states and
-               * continue exploring the graph */
-              loop(newTodo, VisitedSet[VS].add(visited, s), halted + s, graph)
-            } else {
-              /* Otherwise, compute the successors of this state, update the graph, and push
-               * the new successors on the todo list */
-              val succs = s.step(sem).map(s => s.copy(kstore = s.kstore.collect())) /* s.step returns the set of successor states for s */
-              val newGraph = graph.map(_.addEdges(succs.map(s2 => (s, (), s2)))) /* add the new edges to the graph: from s to every successor */
-              /* then, add new successors to the worklist, add s to the visited set, and loop with the new graph */
-              loop(WorkList[WL].append(newTodo, succs), VisitedSet[VS].add(visited, s), halted, newGraph)
-            }
-          /* No element returned by pick, this means the worklist is empty and we have visited every reachable state */
-          case None => AAMOutput(halted, VisitedSet[VS].size(visited), timeout.time, graph, false)
+    val s0 = State.inject(exp, Iterable.empty, sem.initialStore)
+    var worklist = scala.collection.mutable.MutableList[State](s0)
+    val visited = scala.collection.mutable.Set[State]()
+    while (!(timeout.reached || worklist.isEmpty)) {
+      val s = worklist.head
+      worklist = worklist.tail
+      if (!visited.contains(s)) {
+        visited += s
+        if (!(s.halted)) {
+          val succs = s.step(sem)
+          worklist ++= succs
         }
       }
     }
-    loop(
-      /* Start with the initial state resulting from injecting the program */
-      Vector(State.inject(exp, sem.initialEnv, sem.initialStore)).toSeq,
-      /* Initially we didn't visit any state */
-      VisitedSet.MapVisitedSet.empty,
-      /* Initially no halted state has been visited */
-      Set(),
-      /* Graph is initially empty, and we wrap it into an Option */
-      if (graph) { Some(Graph.empty) } else { None })
+    AAMOutput(Set(), visited.size, timeout.time, None, timeout.reached)
   }
 }

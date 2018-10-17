@@ -43,7 +43,9 @@ case class KCFA(k: Int) extends TimestampWrapper {
 /* Similar to KCFA(0), but doesn't include the empty list */
 object ZeroCFA extends TimestampWrapper {
   trait T
-  case class Time(seed: String) extends T
+  case class Time(seed: String) extends T {
+    override def hashCode = 0
+  }
   implicit val isTimestamp = new Timestamp[T] {
     def name = "0-CFA"
     def initial(seed: String) = Time(seed)

@@ -28,9 +28,12 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
   trait KontAddr
   case class NormalKontAddress(exp: Exp, time: Time) extends KontAddr {
     override def toString = s"NormalKontAddress($exp)"
+    lazy val storedHashCode = (exp,time).hashCode
+    override def hashCode = storedHashCode
   }
   case object HaltKontAddress extends KontAddr {
     override def toString = "HaltKontAddress"
+    override def hashCode = 0
   }
 
   object KontAddr {
@@ -50,6 +53,9 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
   case class State(control: Control, store: RefCountingStore[Addr, Abs], kstore: RefCountingKontStore[Addr,KontAddr], a: KontAddr, t: Time) {
     override def toString = control.toString
 
+    lazy val storedHashCode = (control, store, kstore, a, t).hashCode()
+    override def hashCode = storedHashCode
+
     /**
      * Checks whether a states subsumes another, i.e., if it is "bigger". This
      * is used to perform subsumption checking when exploring the state space,
@@ -63,8 +69,8 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
      * Semantics.scala), in order to generate a set of states that succeeds this
      * one.
      */
-    private def integrate(adr: KontAddr, actions: Set[Action[Exp, Abs, Addr]]): Set[(State,Iterable[Addr])] =
-      actions.map({
+    private def integrate(adr: KontAddr, actions: Set[Action[Exp, Abs, Addr]]): Iterable[(State,Iterable[Addr])] =
+      actions.toIterable.map({
         /* When a value is reached, we go to a continuation state */
         case ActionReachedValue(v, store : RefCountingStore[Addr, Abs], _) => (State(ControlKont(v), store, kstore, adr, Timestamp[Time].tick(t)), Iterable.empty)
         /* When a continuation needs to be pushed, push it in the continuation store */
@@ -84,20 +90,20 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
     /**
      * Computes the set of states that follow the current state
      */
-    private def nextStates(sem: Semantics[Exp, Abs, Addr, Time]): Set[(State,Iterable[Addr])] = control match {
+    private def nextStates(sem: Semantics[Exp, Abs, Addr, Time]): Iterable[(State,Iterable[Addr])] = control match {
       /* In a eval state, call the semantic's evaluation method */
       case ControlEval(e, env) => integrate(a, sem.stepEval(e, env, store, t))
       /* In a continuation state, call the semantics' continuation method */
-      case ControlKont(v) => kstore.lookup(a).flatMap({
+      case ControlKont(v) => kstore.lookup(a).toIterable.flatMap({
         case Kont(frame, next) => integrate(next, sem.stepKont(v, frame, store, t))
       })
       /* In an error state, the state is not able to make a step */
-      case ControlError(_) => Set()
+      case ControlError(_) => Iterable.empty
     }
 
-    def step(sem: Semantics[Exp,Abs,Addr,Time]): Set[State] = nextStates(sem).map({
+    def step(sem: Semantics[Exp,Abs,Addr,Time]): Iterable[State] = nextStates(sem).map({
       case (State(control0,store0,kstore0,a0,t0),addrs) => {
-        val (kstore1,decr) = if (a == a0) { (kstore0,List()) } else { kstore0.incRef(a0).decRef(a) }
+        val (kstore1,decr) = kstore0.changeRoot(a,a0)
         val addedRefs = control0.references
         val removedRefs = control.references
         val store1 = store0.incRefs(addedRefs).incRefs(addrs).decRefs(removedRefs).decRefs(decr)
@@ -121,7 +127,7 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
     def inject(exp: Exp, envBindings: Iterable[(String, Addr)], storeBindings: Iterable[(Addr, Abs)]) = {
       val control = ControlEval(exp, Environment.empty[Addr])
       val store = Store.refCountStore[Addr, Abs](storeBindings)
-      val kstore = KontStore.refCountStore[Addr,KontAddr].incRef(HaltKontAddress)
+      val kstore = KontStore.refCountStore[Addr,KontAddr] //.incRef(HaltKontAddress)
       State(control, store, kstore, HaltKontAddress, Timestamp[Time].initial(""))
     }
     import scala.language.implicitConversions
@@ -165,60 +171,21 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
    * program (otherwise it will just visit every reachable state). A @param
    * timeout can also be given.
    */
-  def eval(exp: Exp, sem: Semantics[Exp, Abs, Addr, Time], graph: Boolean, timeout: Timeout): Output = {
-    import scala.language.higherKinds
-    /* The fixpoint computation loop. @param todo is the set of states that need to
-     * be visited (the worklist). @param visited is the set of states that have
-     * already been visited. @param halted is the set of "final" states, where
-     * the program has finished its execution (it is only needed so that it can
-     * be included in the output, to return the final values computed by the
-     * program). @param graph is the current graph that has been computed (if we
-     * need to compute it). If we don't need to compute the graph, @param graph
-     * is None (see type definition for G above in this file).  Note that the
-     * worklist and visited set are "parameterized" and not tied to concrete
-     * implementations; but they are basically similar as Set[State].
-     */
-    @scala.annotation.tailrec
-    def loop[WL[_] : WorkList, VS[_] : VisitedSet](todo: WL[State], visited: VS[State], halted: Set[State], graph: G): AAMOutput = {
-      if (timeout.reached) {
-        /* If we exceeded the maximal time allowed, we stop the evaluation and return what we computed up to now */
-        AAMOutput(halted, VisitedSet[VS].size(visited), timeout.time, graph, true)
-      } else {
-        /* Pick an element from the worklist */
-        WorkList[WL].pick(todo) match {
-          /* We have an element, hence pick returned a pair consisting of the state to visit, and the new worklist */
-          case Some((s, newTodo)) =>
-            if (VisitedSet[VS].contains(visited, s)) {
-              /* If we already visited the state, or if it is subsumed by another already
-               * visited state (i.e., we already visited a state that contains
-               * more information than this one), we ignore it. The subsumption
-               * part reduces the number of visited states. */
-              loop(newTodo, visited, halted, graph)
-            } else if (s.halted) {
-              /* If the state is a final state, add it to the list of final states and
-               * continue exploring the graph */
-              loop(newTodo, VisitedSet[VS].add(visited, s), halted + s, graph)
-            } else {
-              /* Otherwise, compute the successors of this state, update the graph, and push
-               * the new successors on the todo list */
-              val succs = s.step(sem) /* s.step returns the set of successor states for s */
-              val newGraph = graph.map(_.addEdges(succs.map(s2 => (s, (), s2)))) /* add the new edges to the graph: from s to every successor */
-              /* then, add new successors to the worklist, add s to the visited set, and loop with the new graph */
-              loop(WorkList[WL].append(newTodo, succs), VisitedSet[VS].add(visited, s), halted, newGraph)
-            }
-          /* No element returned by pick, this means the worklist is empty and we have visited every reachable state */
-          case None => AAMOutput(halted, VisitedSet[VS].size(visited), timeout.time, graph, false)
-        }
-      }
-    }
-    loop(
-      /* Start with the initial state resulting from injecting the program */
-      Vector(State.inject(exp, sem.initialEnv, sem.initialStore)).toSeq,
-      /* Initially we didn't visit any state */
-      VisitedSet.MapVisitedSet.empty,
-      /* Initially no halted state has been visited */
-      Set(),
-      /* Graph is initially empty, and we wrap it into an Option */
-      if (graph) { Some(Graph.empty) } else { None })
-  }
+   def eval(exp: Exp, sem: Semantics[Exp, Abs, Addr, Time], graph: Boolean, timeout: Timeout): Output = {
+     val s0 = State.inject(exp, Iterable.empty, sem.initialStore)
+     var worklist = scala.collection.mutable.MutableList[State](s0)
+     val visited = scala.collection.mutable.Set[State]()
+     while (!(timeout.reached || worklist.isEmpty)) {
+       val s = worklist.head
+       worklist = worklist.tail
+       if (!visited.contains(s)) {
+         visited += s
+         if (!(s.halted)) {
+           val succs = s.step(sem)
+           worklist ++= succs
+         }
+       }
+     }
+     AAMOutput(Set(), visited.size, timeout.time, None, timeout.reached)
+   }
 }

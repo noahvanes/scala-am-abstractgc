@@ -3,6 +3,8 @@
  */
 trait SchemeExp {
   val pos: Position
+  lazy val storedHash = super.hashCode
+  override def hashCode = storedHash
 }
 object SchemeExp {
   implicit val isExp: Expression[SchemeExp] = new Expression[SchemeExp] {
@@ -957,7 +959,7 @@ object SchemeUtils {
     case SchemeBegin(body, pos) =>
       SchemeBegin(body.map(e => inline(e,bindings)),pos)
     case SchemeCond(clauses, pos) =>
-      SchemeCond(clauses.map(cls => (cls._1,cls._2.map(e => inline(e,bindings)))),pos)
+      SchemeCond(clauses.map(cls => (inline(cls._1,bindings),cls._2.map(e => inline(e,bindings)))),pos)
     case SchemeCase(exp, clauses, default, pos) =>
       SchemeCase(inline(exp,bindings),clauses.map(cls => (cls._1,cls._2.map(e=>inline(e,bindings)))),default.map(e=>inline(e,bindings)),pos)
     case SchemeAnd(exps, pos) =>

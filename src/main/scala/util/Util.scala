@@ -1,6 +1,14 @@
 object Util {
   import scala.io.StdIn
 
+  implicit class MapStrict[A,B](m: Map[A,B]) {
+    def filterKeysStrict(keys: Set[A]): Map[A,B] =
+      keys.foldLeft(Map[A,B]())((acc,key) => m.get(key) match {
+        case Some(vlu) => acc + (key -> vlu)
+        case None => acc
+      })
+  }
+
   def fileContent(file: String): Option[String] = {
     val f = scala.io.Source.fromFile(file)
     val content = f.getLines.mkString("\n")
