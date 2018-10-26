@@ -117,6 +117,7 @@ abstract class EvalKontMachine[Exp : Expression, Abs : JoinLattice, Addr : Addre
       case _ => false
     }
     val references = env.addrs.toSet
+    override lazy val hashCode : Int = (exp,env).hashCode()
   }
   /**
    * Or it can be a continuation component, where a value has been reached and a

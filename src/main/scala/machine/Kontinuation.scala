@@ -20,6 +20,12 @@ case class Kont[KontAddr: KontAddress](frame: Frame, next: KontAddr) {
   override def hashCode = storedHash
 }
 
+object Kont {
+  implicit object KontGraphNode extends GraphNode[(_,Set[Kont[_]]),Unit] {
+    override def label(node: Tuple2[_, Set[Kont[_]]]): String = s"${node._1} -> ${node._2}"
+  }
+}
+
 abstract class KontStore[KontAddr : KontAddress] {
   def keys: Iterable[KontAddr]
   def lookup(a: KontAddr): Set[Kont[KontAddr]]
@@ -87,6 +93,7 @@ case class GCKontStore[Addr : Address, KontAddr : KontAddress](content: Map[Kont
   def subsumes(that: KontStore[KontAddr]) = throw new Exception("NYI: GCKontStore.subsumes(KontStore[KontAddr])")
 
   /* PERFORMANCE OPTIMIZATION */
+
   override def equals(that: Any): Boolean = that match {
     case kstore : GCKontStore[Addr,KontAddr] => this.content == kstore.content
     case _ => false
@@ -96,28 +103,33 @@ case class GCKontStore[Addr : Address, KontAddr : KontAddress](content: Map[Kont
   override def hashCode = storedHashCode
 }
 
-case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress](content: Map[KontAddr, Set[Kont[KontAddr]]] = Map[KontAddr, Set[Kont[KontAddr]]](),
-                                                                        counts: Map[KontAddr,Int] = Map[KontAddr,Int]().withDefaultValue(0),
-                                                                        refs: Map[KontAddr,Set[KontAddr]] = Map[KontAddr,Set[KontAddr]]().withDefaultValue(Set()),
-                                                                        vrefs: Map[KontAddr,Set[Addr]] = Map[KontAddr,Set[Addr]]().withDefaultValue(Set()),
-                                                                        hc: Int = 0) extends KontStore[KontAddr] {
 
-  private def decRefUpdate(adr: KontAddr, counts: Map[KontAddr,Int], deleted: List[KontAddr], decremented: List[Addr], candidates: Set[KontAddr]): (Map[KontAddr,Int],List[KontAddr],List[Addr],Set[KontAddr]) = {
+case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress]
+  (content: Map[KontAddr, (Set[Kont[KontAddr]],Set[KontAddr],Set[Addr])] = Map[KontAddr, (Set[Kont[KontAddr]],Set[KontAddr],Set[Addr])](),
+   counts: Map[KontAddr,Int] = Map[KontAddr,Int]().withDefaultValue(0),
+   hc: Int = 0) extends KontStore[KontAddr] {
+
+  private def decRefUpdate(adr: KontAddr, counts: Map[KontAddr,Int], deleted: List[KontAddr], decremented: Set[KontAddr], addrs: List[Addr]):  (Map[KontAddr,Int], List[KontAddr], Set[KontAddr], List[Addr]) = {
     val newCount = counts(adr) - 1
     if (newCount == 0) {
-      refs(adr).foldLeft((counts, adr :: deleted, decremented++vrefs(adr), candidates))((acc,ref) => decRefUpdate(ref,acc._1,acc._2,acc._3,acc._4))
+      content.get(adr) match {
+        case None =>
+          (counts, deleted, decremented, addrs)
+        case Some((_,kaddrs,vrefs)) =>
+          kaddrs.foldLeft((counts, adr::deleted, decremented, addrs++vrefs))((acc,ref) => decRefUpdate(ref,acc._1,acc._2,acc._3,acc._4))
+      }
     } else {
-      (counts + (adr -> newCount), deleted, decremented, candidates + adr)
+      (counts + (adr -> newCount), deleted, decremented + adr, addrs)
     }
   }
 
   private def decRef(adr: KontAddr): (RefCountingKontStore[Addr,KontAddr],List[Addr],Set[KontAddr]) = {
-    val (updatedCounts,deleted,addrs,decremented) = decRefUpdate(adr,counts,List(),List(),Set())
+    val (updatedCounts,deleted,decremented,addrs) = decRefUpdate(adr,counts,List(),Set(),List())
     val updatedHC = deleted.foldLeft(hc)((acc,ref) => {
-      val konts = content.get(ref).getOrElse(Iterable.empty)
+      val konts = content.get(ref).map(_._1).getOrElse(Iterable.empty)
       konts.foldLeft(acc)((acc2,cnt) => acc2 - cnt.hashCode())
     })
-    (RefCountingKontStore(content--deleted, updatedCounts--deleted, refs--deleted, vrefs--deleted, updatedHC), addrs, decremented--deleted)
+    (RefCountingKontStore(content--deleted, updatedCounts--deleted, updatedHC), addrs, decremented--deleted)
   }
 
   private def incRef(adr: KontAddr): RefCountingKontStore[Addr,KontAddr] =
@@ -130,27 +142,24 @@ case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress](content:
   }
 
   def keys = content.keys
-  def lookup(adr: KontAddr) = content(adr)
-  def forall(p: ((KontAddr, Set[Kont[KontAddr]])) => Boolean) = content.forall(p)
+  def lookup(adr: KontAddr) = content(adr)._1
+  def forall(p: ((KontAddr, Set[Kont[KontAddr]])) => Boolean) = content.forall(n => p(n._1,n._2._1))
 
   def extend(adr: KontAddr, kont: Kont[KontAddr]) = extendRC(adr,kont)._1
   def extendRC(adr: KontAddr, kont: Kont[KontAddr]): (RefCountingKontStore[Addr,KontAddr],Iterable[Addr]) = content.get(adr) match {
-    case None => {
+    case None =>
       val kontRefs = kont.frame.references
-      (RefCountingKontStore(content+(adr->Set(kont)), counts+(kont.next->(counts(kont.next)+1)), refs+(adr->Set(kont.next)), vrefs+(adr->kontRefs), hc+kont.hashCode()), kontRefs)
-    }
-    case Some(konts) if konts.contains(kont) => (this, Iterable.empty)
-    case Some(konts) => {
-      val updatedContent = content + (adr -> (konts + kont))
+      val updatedContent = content + (adr->(Set(kont),Set(kont.next),kontRefs))
+      val updatedCounts  = counts  + (kont.next -> (counts(kont.next) + 1))
+      val updatedHC      = hc      + kont.hashCode()
+      (RefCountingKontStore(updatedContent, updatedCounts, updatedHC), kontRefs)
+    case Some((konts,_,_)) if konts.contains(kont) =>
+      (this, Iterable.empty)
+    case Some((konts,kaddrs,addrs)) =>
       val updatedHC = hc + kont.hashCode()
-      val adrRefs = refs(adr)
-      val adrVRefs = vrefs(adr)
-      val (updatedCounts,updatedRefs) = if (adrRefs.contains(kont.next)) { (counts,refs) } else { (counts+(kont.next->(counts(kont.next)+1)), refs+(adr->(adrRefs+kont.next))) }
-      val (updatedVRefs,added) = kont.frame.references.foldLeft((adrVRefs,List[Addr]()))((acc,ref) => {
-        if (adrVRefs.contains(ref)) { acc } else (acc._1 + ref, ref :: acc._2)
-      })
-      (RefCountingKontStore(updatedContent,updatedCounts,updatedRefs, vrefs + (adr -> updatedVRefs), updatedHC), added)
-    }
+      val (updatedCounts,updatedKaddrs) = if (kaddrs.contains(kont.next)) { (counts, kaddrs) } else { (counts+(kont.next->(counts(kont.next)+1)), kaddrs+kont.next) }
+      val (addedAddrs,updatedAddrs) = kont.frame.references.foldLeft((List[Addr](), addrs))((acc,ref) =>  if (addrs.contains(ref)) { acc } else (ref::acc._1,acc._2+ref))
+      (RefCountingKontStore(content+(adr->(konts+kont,updatedKaddrs,updatedAddrs)),updatedCounts,updatedHC), addedAddrs)
   }
 
   /* TODO */
@@ -159,12 +168,50 @@ case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress](content:
   def subsumes(that: KontStore[KontAddr]) = throw new Exception("NYI: RefCountingKontStore.subsumes(KontStore[Addr,KontAddr])")
 
   /* PERFORMANCE OPTIMIZATION */
+
   override def equals(that: Any): Boolean = that match {
-    case kstore : RefCountingKontStore[Addr,KontAddr] => this.content == kstore.content
+    case kstore : RefCountingKontStore[Addr,KontAddr] => this.hc == kstore.hc && this.content == kstore.content
     case _ => false
   }
 
   override def hashCode = hc
+
+  /* DEBUGGING */
+
+  def toFile(path: String, root: KontAddr) = {
+    val kstore = this
+    implicit val kontNode = new GraphNode[KontAddr,Unit] {
+      override def label(adr: KontAddr): String = s"${adr}"
+      override def tooltip(adr: KontAddr): String = s"${kstore.counts(adr)}"
+      override def color(adr: KontAddr): Color = if (adr == root) { Colors.Green } else { Colors.White }
+    }
+    val initG = Graph.empty[KontAddr,Unit,Unit]
+    val fullG = content.keys.foldLeft(initG)((acc,adr) => acc.addEdges(content(adr)._2.map(succ => (adr,(),succ))))
+    GraphDOTOutput.toFile(fullG,())(path)
+  }
+
+  def toPng(path: String, root: KontAddr): Unit = {
+    import sys.process._
+    import java.io.File
+    val tempFile = "temp.dot"
+    toFile(tempFile, root)
+    s"dot -Tpng ${tempFile} -o ${path}".!
+    new File(tempFile).delete()
+  }
+
+  def containsIsolatedCycle(root: KontAddr): Boolean = {
+    var marked = Set[KontAddr]()
+    var todo = List[KontAddr](root)
+    while (!todo.isEmpty) {
+      val next = todo.head
+      todo = todo.tail
+      if(!marked.contains(next)) {
+        marked += next
+        content.get(next).map(d => todo ++= d._2)
+      }
+    }
+    return (content--marked).size > 0
+  }
 }
 
 case class TimestampedKontStore[KontAddr : KontAddress](content: Map[KontAddr, Set[Kont[KontAddr]]], timestamp: Int) extends KontStore[KontAddr] {

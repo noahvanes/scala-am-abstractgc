@@ -125,7 +125,7 @@ case class RefCountingStore[Addr : Address, Abs : JoinLattice](content: Map[Addr
     /* PERFORMANCE OPTIMIZATION */
 
     override def equals(that: Any): Boolean = that match {
-      case store: RefCountingStore[Addr,Abs] => this.content == store.content
+      case store: RefCountingStore[Addr,Abs] => this.hc == store.hc && this.content == store.content
       case _ => false
     }
 

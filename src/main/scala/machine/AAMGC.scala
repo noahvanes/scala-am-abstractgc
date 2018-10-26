@@ -27,12 +27,12 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
    */
   trait KontAddr
   case class NormalKontAddress(exp: Exp, time: Time) extends KontAddr {
-    override def toString = s"NormalKontAddress($exp)"
+    override def toString = s"$exp"
     lazy val storedHashCode = (exp,time).hashCode
     override def hashCode = storedHashCode
   }
   case object HaltKontAddress extends KontAddr {
-    override def toString = "HaltKontAddress"
+    override def toString = "HALT"
     override def hashCode = 0
   }
 
@@ -69,8 +69,8 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
      * Semantics.scala), in order to generate a set of states that succeeds this
      * one.
      */
-    private def integrate(adr: KontAddr, actions: Set[Action[Exp, Abs, Addr]], sem: Semantics[Exp, Abs, Addr, Time]): Iterable[State] =
-      actions.toIterable.map({
+    private def integrate(adr: KontAddr, actions: Set[Action[Exp, Abs, Addr]], sem: Semantics[Exp, Abs, Addr, Time]): List[State] =
+      actions.toList.map({
         /* When a value is reached, we go to a continuation state */
         case ActionReachedValue(v, store : GCStore[Addr, Abs], _) => State(ControlKont(v), store, kstore, adr, Timestamp[Time].tick(t)).collect(sem)
         /* When a continuation needs to be pushed, push it in the continuation store */
@@ -89,15 +89,15 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
     /**
      * Computes the set of states that follow the current state
      */
-    def step(sem: Semantics[Exp, Abs, Addr, Time]): Iterable[State] = control match {
+    def step(sem: Semantics[Exp, Abs, Addr, Time]): List[State] = control match {
       /* In a eval state, call the semantic's evaluation method */
       case ControlEval(e, env) => integrate(a, sem.stepEval(e, env, store, t), sem)
       /* In a continuation state, call the semantics' continuation method */
-      case ControlKont(v) => kstore.lookup(a).toIterable.flatMap({
+      case ControlKont(v) => kstore.lookup(a).toList.flatMap({
         case Kont(frame, next) => integrate(next, sem.stepKont(v, frame, store, t), sem)
       })
       /* In an error state, the state is not able to make a step */
-      case ControlError(_) => Iterable.empty
+      case ControlError(_) => List()
     }
 
     private def collect(sem: Semantics[Exp,Abs,Addr,Time]): State = {
@@ -173,21 +173,23 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
    * program (otherwise it will just visit every reachable state). A @param
    * timeout can also be given.
    */
-  def eval(exp: Exp, sem: Semantics[Exp, Abs, Addr, Time], graph: Boolean, timeout: Timeout): Output = {
-    val s0 = State.inject(exp, Iterable.empty, sem.initialStore)
-    var worklist = scala.collection.mutable.MutableList[State](s0)
-    val visited = scala.collection.mutable.Set[State]()
-    while (!(timeout.reached || worklist.isEmpty)) {
-      val s = worklist.head
-      worklist = worklist.tail
-      if (!visited.contains(s)) {
-        visited += s
-        if (!(s.halted)) {
-          val succs = s.step(sem)
-          worklist ++= succs
+   /**
+    * Performs the evaluation of an expression @param exp (more generally, a
+    * program) under the given semantics @param sem. If @param graph is true, it
+    * will compute and generate the graph corresponding to the execution of the
+    * program (otherwise it will just visit every reachable state). A @param
+    * timeout can also be given.
+    */
+    def eval(exp: Exp, sem: Semantics[Exp, Abs, Addr, Time], graph: Boolean, timeout: Timeout): Output = {
+      val s0 = State.inject(exp, Iterable.empty, sem.initialStore)
+      val worklist = scala.collection.mutable.Queue[State](s0)
+      val visited = scala.collection.mutable.Set[State]()
+      while (!(timeout.reached || worklist.isEmpty)) {
+        val s = worklist.dequeue
+        if (visited.add(s) && !s.halted) {
+          worklist ++= s.step(sem)
         }
       }
+      AAMOutput(Set(), visited.size, timeout.time, None, timeout.reached)
     }
-    AAMOutput(Set(), visited.size, timeout.time, None, timeout.reached)
-  }
 }

@@ -6,10 +6,10 @@ object Main {
   val INPUT_DIR = "test/"
   val OUTPUT_DIR = "/Users/nvanes/Desktop/outputs/"
   val OUTPUT_PNG = false
-  val WARMUP_RUNS = 50
-  val TIMEOUT = Duration(7200, "seconds")
+  val WARMUP_RUNS = 100
+  val TIMEOUT = Duration(3600, "seconds")
 
-  val bounded = new BoundedInteger(5)
+  val bounded = new BoundedInteger(7)
   val lattice = new MakeSchemeLattice[Type.S, Concrete.B, bounded.I, Type.F, Type.C, Type.Sym](false)
   val address = ClassicalAddress
   val time = ZeroCFA

@@ -14,7 +14,7 @@ class MakeSchemeLattice[
   C : CharLattice,
   Sym : SymbolLattice
 ](supportsCounting: Boolean) extends SchemeLattice {
-  sealed trait Value extends Product { 
+  sealed trait Value extends Product {
     lazy val storedHash = ScalaRunTime._hashCode(this)
     override def hashCode = storedHash
   }
