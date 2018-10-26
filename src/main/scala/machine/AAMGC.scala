@@ -31,6 +31,11 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
     lazy val storedHashCode = (exp,time).hashCode
     override def hashCode = storedHashCode
   }
+  case class CallAddress(fexp: Exp, time: Time) extends KontAddr {
+    override def toString = s"$fexp"
+    lazy val storedHashCode = (fexp,time).hashCode
+    override def hashCode = storedHashCode
+  }
   case object HaltKontAddress extends KontAddr {
     override def toString = "HALT"
     override def hashCode = 0
@@ -43,6 +48,10 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
   implicit val stateWithKey = new WithKey[State] {
     type K = KontAddr
     def key(st: State) = st.a
+  }
+
+  case object ReturnFrame extends Frame {
+    val refs = Set()
   }
 
   /**
@@ -81,7 +90,9 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
         /* When a value needs to be evaluated, we go to an eval state */
         case ActionEval(e, env, store : GCStore[Addr, Abs], _) => State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t)).collect(sem)
         /* When a function is stepped in, we also go to an eval state */
-        case ActionStepIn(fexp, _, e, env, store : GCStore[Addr, Abs], _, _) => State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t, fexp)).collect(sem)
+        case ActionStepIn(fexp, _, e, env, store : GCStore[Addr, Abs], _, _) =>
+          val next = CallAddress(fexp,t)
+          State(ControlEval(e, env), store, kstore.extend(next, Kont(ReturnFrame, adr)), next, Timestamp[Time].tick(t, fexp)).collect(sem)
         /* When an error is reached, we go to an error state */
         case ActionError(err) => State(ControlError(err), store, kstore, adr, Timestamp[Time].tick(t)).collect(sem)
       })
@@ -94,6 +105,7 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
       case ControlEval(e, env) => integrate(a, sem.stepEval(e, env, store, t), sem)
       /* In a continuation state, call the semantics' continuation method */
       case ControlKont(v) => kstore.lookup(a).toList.flatMap({
+        case Kont(ReturnFrame, next) => List(State(ControlKont(v), store, kstore, next, t).collect(sem))
         case Kont(frame, next) => integrate(next, sem.stepKont(v, frame, store, t), sem)
       })
       /* In an error state, the state is not able to make a step */

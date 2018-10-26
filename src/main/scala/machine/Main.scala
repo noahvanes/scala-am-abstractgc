@@ -6,7 +6,7 @@ object Main {
   val INPUT_DIR = "test/"
   val OUTPUT_DIR = "/Users/nvanes/Desktop/outputs/"
   val OUTPUT_PNG = false
-  val WARMUP_RUNS = 100
+  val WARMUP_RUNS = 0
   val TIMEOUT = Duration(3600, "seconds")
 
   val bounded = new BoundedInteger(7)
@@ -22,7 +22,7 @@ object Main {
   case object ClassicalGC extends GCStrategy { def name = "ClassicalGC" }
 
   def main(args: Array[String]): Unit = {
-    val current = "primtest"
+    val current = "collatz"
     //benchmark(current,NoGC)
     //benchmark(current,ClassicalGC)
     benchmark(current,RefCounting)

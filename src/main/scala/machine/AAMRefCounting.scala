@@ -23,42 +23,30 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
   def name = "AAMRefCounting"
   var count = 0
 
-  /**
-   * The store used for continuations is a KontStore (defined in
-   * Kontinuation.scala). It is parameterized by continuation addresses, that
-   * are element of the KontAddress typeclass.
-   */
   trait KontAddr
   case class NormalKontAddress(exp: Exp, time: Time) extends KontAddr {
     override def toString = s"$exp"
     lazy val storedHashCode = (exp,time).hashCode
     override def hashCode = storedHashCode
   }
+  case class CallAddress(fexp: Exp, time: Time) extends KontAddr {
+    override def toString = s"Call($fexp)"
+    lazy val storedHashCode = (fexp,time).hashCode
+    override def hashCode = storedHashCode
+  }
   case object HaltKontAddress extends KontAddr {
     override def toString = "HALT"
     override def hashCode = 0
   }
-
   object KontAddr {
     implicit object KontAddrKontAddress extends KontAddress[KontAddr]
   }
 
-  implicit val stateWithKey = new WithKey[State] {
-    type K = KontAddr
-    def key(st: State) = st.a
+  case object ReturnFrame extends Frame {
+    val refs = Set()
   }
 
-  case class AAMFrame(frame: Frame, ret: Boolean) extends Frame {
-    lazy val refs = frame.refs
-    override lazy val hashCode = frame.hashCode
-  }
-
-  /**
-   * A machine state is made of a control component, a value store, a
-   * continuation store, and an address representing where the current
-   * continuation lives.
-   */
-  case class State(control: Control, store: RefCountingStore[Addr, Abs], kstore: RefCountingKontStore[Addr,KontAddr], a: KontAddr, t: Time, ret: Boolean) {
+  case class State(control: Control, store: RefCountingStore[Addr, Abs], kstore: RefCountingKontStore[Addr,KontAddr], a: KontAddr, t: Time) {
     override def toString = control.toString
     lazy val storedHashCode = (control, store, kstore, a, t).hashCode()
     override def hashCode = storedHashCode
@@ -68,94 +56,71 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
       case _ => false
     }
 
-    /**
-     * Checks whether a states subsumes another, i.e., if it is "bigger". This
-     * is used to perform subsumption checking when exploring the state space,
-     * in order to avoid exploring states for which another state that subsumes
-     * them has already been explored.
-     */
-    def subsumes(that: State): Boolean = control.subsumes(that.control) && store.subsumes(that.store) && a == that.a && kstore.subsumes(that.kstore) && t == that.t
-
-    /**
-     * Integrates a set of actions (returned by the semantics, see
-     * Semantics.scala), in order to generate a set of states that succeeds this
-     * one.
-     */
-    private def integrate(adr: KontAddr, ret: Boolean, actions: Set[Action[Exp, Abs, Addr]]): List[(State,Iterable[Addr])] =
+    private def integrate(adr: KontAddr, actions: Set[Action[Exp, Abs, Addr]]): List[(State,Iterable[Addr])] =
       actions.toList.map({
-        /* When a value is reached, we go to a continuation state */
         case ActionReachedValue(v, store : RefCountingStore[Addr, Abs], _) =>
-          (State(ControlKont(v), store, kstore, adr, Timestamp[Time].tick(t), ret), Iterable.empty)
-        /* When a continuation needs to be pushed, push it in the continuation store */
+          (State(ControlKont(v), store, kstore, adr, Timestamp[Time].tick(t)), Iterable.empty)
         case ActionPush(frame, e, env, store : RefCountingStore[Addr, Abs], _) =>
           val next = NormalKontAddress(e, t)
-          val (kstore1,addrs) = kstore.extendRC(next, Kont(AAMFrame(frame,ret), adr))
-          (State(ControlEval(e, env), store, kstore1, next, Timestamp[Time].tick(t), false),addrs)
-        /* When a value needs to be evaluated, we go to an eval state */
+          val (kstore1,addrs) = kstore.extendRC(next, Kont(frame, adr))
+          (State(ControlEval(e, env), store, kstore1, next, Timestamp[Time].tick(t)),addrs)
         case ActionEval(e, env, store : RefCountingStore[Addr, Abs], _) =>
-          (State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t), ret), Iterable.empty)
-        /* When a function is stepped in, we also go to an eval state */
+          (State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t)), Iterable.empty)
         case ActionStepIn(fexp, _, e, env, store : RefCountingStore[Addr, Abs], _, _) =>
-          (State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t, fexp), true), Iterable.empty)
-        /* When an error is reached, we go to an error state */
+          val next = CallAddress(fexp, t)
+          val kstore1 = kstore.extend(next, Kont(ReturnFrame, adr))
+          (State(ControlEval(e, env), store, kstore1, next, Timestamp[Time].tick(t, fexp)), Iterable.empty)
         case ActionError(err) =>
-          (State(ControlError(err), store : RefCountingStore[Addr, Abs], kstore, adr, Timestamp[Time].tick(t), ret), Iterable.empty)
+          (State(ControlError(err), store : RefCountingStore[Addr, Abs], kstore, adr, Timestamp[Time].tick(t)), Iterable.empty)
       })
 
-    /**
-     * Computes the set of states that follow the current state
-     */
     private def nextStates(sem: Semantics[Exp, Abs, Addr, Time]): List[(State,Iterable[Addr])] = control match {
-      /* In a eval state, call the semantic's evaluation method */
-      case ControlEval(e, env) => integrate(a, ret, sem.stepEval(e, env, store, t))
-      /* In a continuation state, call the semantics' continuation method */
+      case ControlEval(e, env) => integrate(a, sem.stepEval(e, env, store, t))
       case ControlKont(v) => kstore.lookup(a).toList.flatMap({
-        case Kont(AAMFrame(frame,prevret), next) => integrate(next, prevret, sem.stepKont(v, frame, store, t))
+        case Kont(ReturnFrame, next) => List((State(ControlKont(v), store, kstore, next, t), Iterable.empty))
+        case Kont(frame, next) => integrate(next, sem.stepKont(v, frame, store, t))
       })
-      /* In an error state, the state is not able to make a step */
       case ControlError(_) => List()
     }
 
     def step(sem: Semantics[Exp,Abs,Addr,Time]): List[State] = nextStates(sem).map({
-      case (State(control0,store0,kstore0,a0,t0,resret), addrs) => {
+      case (State(control0,store0,kstore0,a0,t0), addrs) => {
         val (kstore1,decr) = kstore0.changeRoot(a,a0)
         val addedRefs = control0.references -- control.references
         val removedRefs = control.references -- control0.references
         val store1 = store0.incRefs(addedRefs).incRefs(addrs).decRefs(removedRefs).decRefs(decr)
-        /* DEBUGGING
-        if(!kstore.containsIsolatedCycle(a) && kstore1.containsIsolatedCycle(a0) && !resret) {
+        /* DEBUGGING */
+        if(!kstore.containsIsolatedCycle(a) && kstore1.containsIsolatedCycle(a0)) {
           count = count + 1
           println(s"$control -> $control0")
           kstore.toPng(s"/Users/nvanes/Desktop/data/${count}-A.png",a)
           kstore1.toPng(s"/Users/nvanes/Desktop/data/${count}-B.png",a0)
           throw new Exception("Should not happen!")
         }
-        * END DEBUGGING */
-        State(control0,store1,kstore1,a0,t0,resret)
+        /* END DEBUGGING */
+        State(control0,store1,kstore1,a0,t0)
       }
     })
 
     def stepAnalysis[L](analysis: Analysis[L, Exp, Abs, Addr, Time], current: L): L = ???
 
-    /**
-     * Checks if the current state is a final state. It is the case if it
-     * reached the end of the computation, or an error
-     */
     def halted: Boolean = control match {
       case ControlEval(_, _) => false
       case ControlKont(v) => a == HaltKontAddress
       case ControlError(_) => true
     }
   }
+
   object State {
+
     def inject(exp: Exp, envBindings: Iterable[(String, Addr)], storeBindings: Iterable[(Addr, Abs)]) = {
       val control = ControlEval(exp, Environment.empty[Addr])
       val store = Store.refCountStore[Addr, Abs](storeBindings)
       val kstore = KontStore.refCountStore[Addr,KontAddr] //.incRef(HaltKontAddress)
-      State(control, store, kstore, HaltKontAddress, Timestamp[Time].initial(""), true)
+      State(control, store, kstore, HaltKontAddress, Timestamp[Time].initial(""))
     }
-    import scala.language.implicitConversions
 
+    import scala.language.implicitConversions
     implicit val graphNode = new GraphNode[State, Unit] {
       override def label(s: State) = s.toString
       override def color(s: State) = s.control match {
@@ -164,7 +129,6 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
         case _: ControlKont => Colors.Yellow
         case _: ControlError => Colors.Red
       }
-
       import org.json4s._
       import org.json4s.JsonDSL._
       import org.json4s.jackson.JsonMethods._
@@ -181,20 +145,12 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
       case ControlKont(v) => Set[Abs](v)
       case _ => Set[Abs]()
     })
-
     def toFile(path: String)(output: GraphOutput) = graph match {
       case Some(g) => output.toFile(g, ())(path)
       case None => println("Not generating graph because no graph was computed")
     }
   }
 
-  /**
-   * Performs the evaluation of an expression @param exp (more generally, a
-   * program) under the given semantics @param sem. If @param graph is true, it
-   * will compute and generate the graph corresponding to the execution of the
-   * program (otherwise it will just visit every reachable state). A @param
-   * timeout can also be given.
-   */
    def eval(exp: Exp, sem: Semantics[Exp, Abs, Addr, Time], graph: Boolean, timeout: Timeout): Output = {
      val s0 = State.inject(exp, Iterable.empty, sem.initialStore)
      val worklist = scala.collection.mutable.Queue[State](s0)

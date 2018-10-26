@@ -149,7 +149,7 @@ case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress]
   def extendRC(adr: KontAddr, kont: Kont[KontAddr]): (RefCountingKontStore[Addr,KontAddr],Iterable[Addr]) = content.get(adr) match {
     case None =>
       val kontRefs = kont.frame.references
-      val updatedContent = content + (adr->(Set(kont),Set(kont.next),kontRefs))
+      val updatedContent = content + (adr->(Set(kont),Set(kont.next)-adr,kontRefs))
       val updatedCounts  = counts  + (kont.next -> (counts(kont.next) + 1))
       val updatedHC      = hc      + kont.hashCode()
       (RefCountingKontStore(updatedContent, updatedCounts, updatedHC), kontRefs)
@@ -157,7 +157,7 @@ case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress]
       (this, Iterable.empty)
     case Some((konts,kaddrs,addrs)) =>
       val updatedHC = hc + kont.hashCode()
-      val (updatedCounts,updatedKaddrs) = if (kaddrs.contains(kont.next)) { (counts, kaddrs) } else { (counts+(kont.next->(counts(kont.next)+1)), kaddrs+kont.next) }
+      val (updatedCounts,updatedKaddrs) = if (kont.next == adr || kaddrs.contains(kont.next)) { (counts, kaddrs) } else { (counts+(kont.next->(counts(kont.next)+1)), kaddrs+kont.next) }
       val (addedAddrs,updatedAddrs) = kont.frame.references.foldLeft((List[Addr](), addrs))((acc,ref) =>  if (addrs.contains(ref)) { acc } else (ref::acc._1,acc._2+ref))
       (RefCountingKontStore(content+(adr->(konts+kont,updatedKaddrs,updatedAddrs)),updatedCounts,updatedHC), addedAddrs)
   }
@@ -183,7 +183,10 @@ case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress]
     implicit val kontNode = new GraphNode[KontAddr,Unit] {
       override def label(adr: KontAddr): String = s"${adr}"
       override def tooltip(adr: KontAddr): String = s"${kstore.counts(adr)}"
-      override def color(adr: KontAddr): Color = if (adr == root) { Colors.Green } else { Colors.White }
+      override def color(adr: KontAddr): Color = if (adr == root) Colors.Green else adr match {
+        case _ : AAMRefCounting[_,_,_,_]#CallAddress => Colors.Yellow
+        case _ => Colors.White
+      }
     }
     val initG = Graph.empty[KontAddr,Unit,Unit]
     val fullG = content.keys.foldLeft(initG)((acc,adr) => acc.addEdges(content(adr)._2.map(succ => (adr,(),succ))))
