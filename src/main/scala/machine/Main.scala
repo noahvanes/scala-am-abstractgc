@@ -23,7 +23,7 @@ object Main {
   case object ClassicalGC extends GCStrategy { def name = "ClassicalGC" }
 
   def main(args: Array[String]): Unit = {
-    val current = "primtest"
+    val current = "collatz"
     //benchmark(current,NoGC)
     //benchmark(current,ClassicalGC)
     benchmark(current,RefCounting)

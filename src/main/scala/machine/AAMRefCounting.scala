@@ -29,11 +29,15 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
     lazy val storedHashCode = (exp,time).hashCode
     override def hashCode = storedHashCode
   }
+  case class CallAddress(fexp: Exp, time: Time) extends KontAddr {
+    override def toString = s"Call($fexp)"
+    lazy val storedHashCode = (fexp,time).hashCode
+    override def hashCode = storedHashCode
+  }
   case object HaltKontAddress extends KontAddr {
     override def toString = "HALT"
     override def hashCode = 0
   }
-
   object KontAddr {
     implicit object KontAddrKontAddress extends KontAddress[KontAddr]
   }
@@ -66,7 +70,7 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
         case ActionStepIn(fexp, _, e, env, store : RefCountingStore[Addr, Abs], _, _) =>
           (State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t, fexp), true), Iterable.empty)
         case ActionError(err) =>
-          (State(ControlError(err), store : RefCountingStore[Addr, Abs], kstore, adr, Timestamp[Time].tick(t), ret), Iterable.empty)
+          (State(ControlError(err), store : RefCountingStore[Addr, Abs], kstore, adr, Timestamp[Time].tick(t)), Iterable.empty)
       })
 
     private def nextStates(sem: Semantics[Exp, Abs, Addr, Time]): List[(State,Iterable[Addr])] = control match {
@@ -154,20 +158,12 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
       case ControlKont(v) => Set[Abs](v)
       case _ => Set[Abs]()
     })
-
     def toFile(path: String)(output: GraphOutput) = graph match {
       case Some(g) => output.toFile(g, ())(path)
       case None => println("Not generating graph because no graph was computed")
     }
   }
 
-  /**
-   * Performs the evaluation of an expression @param exp (more generally, a
-   * program) under the given semantics @param sem. If @param graph is true, it
-   * will compute and generate the graph corresponding to the execution of the
-   * program (otherwise it will just visit every reachable state). A @param
-   * timeout can also be given.
-   */
    def eval(exp: Exp, sem: Semantics[Exp, Abs, Addr, Time], graph: Boolean, timeout: Timeout): Output = {
      val s0 = State.inject(exp, Iterable.empty, sem.initialStore)
      val worklist = scala.collection.mutable.Queue[State](s0)
