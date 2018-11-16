@@ -43,28 +43,26 @@ abstract class Store[Addr : Address, Abs : JoinLattice] {
 }
 
 /** Basic store with no fancy feature, just a map from addresses to values */
-case class BasicStore[Addr : Address, Abs : JoinLattice](content: Map[Addr, Abs]) extends Store[Addr, Abs] {
+case class BasicStore[Addr : Address, Abs : JoinLattice](content: Map[Addr, Abs], hc: Int = 0) extends Store[Addr, Abs] {
   override def toString = content.filterKeys(a => !Address[Addr].isPrimitive(a)).toString
   def keys = content.keys
   def forall(p: ((Addr, Abs)) => Boolean) = content.forall({ case (a, v) => p(a, v) })
   def lookup(a: Addr) = content.get(a)
   def lookupBot(a: Addr) = content.get(a).getOrElse(JoinLattice[Abs].bottom)
   def extend(a: Addr, v: Abs) = content.get(a) match {
-    case None => this.copy(content = content + (a -> v))
-    case Some(v2) => this.copy(content = content + (a -> JoinLattice[Abs].join(v2, v)))
+    case None => this.copy(content = content + (a -> v), hc = hc + v.hashCode())
+    case Some(v2) =>
+      val updatedVal = JoinLattice[Abs].join(v2, v)
+      val updatedHC = hc - v2.hashCode() + updatedVal.hashCode()
+      this.copy(content = content + (a -> updatedVal), hc = updatedHC)
   }
   def update(a: Addr, v: Abs) = extend(a, v)
   def updateOrExtend(a: Addr, v: Abs) = extend(a, v)
-  def join(that: Store[Addr, Abs]) =
-    if (that.isInstanceOf[BasicStore[Addr, Abs]]) {
-      this.copy(content = content |+| that.asInstanceOf[BasicStore[Addr, Abs]].content)
-    } else {
-      throw new Exception(s"Incompatible stores: ${this.getClass.getSimpleName} and ${that.getClass.getSimpleName}")
-    }
+  def join(that: Store[Addr, Abs]) = ???
   def subsumes(that: Store[Addr, Abs]) =
     that.forall((binding: (Addr, Abs)) => JoinLattice[Abs].subsumes(lookupBot(binding._1), binding._2))
-  def diff(that: Store[Addr, Abs]) =
-    this.copy(content = content.filter({ case (a, v) => that.lookupBot(a) != v}))
+  def diff(that: Store[Addr, Abs]) = ???
+  override def hashCode = hc
 }
 
 /* WARNING: For efficiency, we currently assume that: refs(join(u,v)) = refs(u) U refs(v), although this assumption can easily be avoided */
@@ -96,14 +94,16 @@ case class RefCountingStore[Addr : Address, Abs : JoinLattice](content: Map[Addr
       }
     }
 
-    def extend(adr: Addr, v: Abs) = content.get(adr) match {
+    def extend(adr: Addr, v: Abs): RefCountingStore[Addr,Abs] = content.get(adr) match {
       case None => {
-        val vRefs = JoinLattice[Abs].references(v)
+        val vRefs = JoinLattice[Abs].references(v) - adr
         RefCountingStore(content+(adr->v), vRefs.foldLeft(counts)((acc,ref)=>acc+(ref->(counts(ref)+1))), refs+(adr->vRefs), hc+v.hashCode())
       }
+      case Some(u) if JoinLattice[Abs].subsumes(u,v) =>
+        this
       case Some(u) => {
         val uRefs = refs(adr)
-        val vRefs = JoinLattice[Abs].references(v)
+        val vRefs = JoinLattice[Abs].references(v) - adr
         val updatedVal = JoinLattice[Abs].join(u,v)
         val updatedContent = content + (adr -> updatedVal)
         val updatedHC = hc - u.hashCode() + updatedVal.hashCode()
@@ -114,10 +114,11 @@ case class RefCountingStore[Addr : Address, Abs : JoinLattice](content: Map[Addr
       }
     }
 
-    def update(a: Addr, v: Abs) = extend(a,v)
-    def updateOrExtend(a: Addr, v: Abs) = extend(a,v)
+    def update(a: Addr, v: Abs): RefCountingStore[Addr,Abs] = extend(a,v)
+    def updateOrExtend(a: Addr, v: Abs): RefCountingStore[Addr,Abs] = extend(a,v)
 
     /* TODO */
+
     def join(that: Store[Addr,Abs]) = throw new Exception("NYI: RefCountingStore.join(Store[Addr,Abs])")
     def subsumes(that: Store[Addr,Abs]) = throw new Exception("NYI: RefCountingStore.subsumes(Store[Addr,Abs])")
     def diff(that: Store[Addr,Abs]) = throw new Exception("NYI: RefCountingStore.diff(Store[Addr,Abs])")
@@ -130,11 +131,60 @@ case class RefCountingStore[Addr : Address, Abs : JoinLattice](content: Map[Addr
     }
 
     override def hashCode = hc
-  }
+
+    /* DEBUGGING */
+
+    private def transclo(addrs: Set[Addr]): Set[Addr] = {
+      var transclo = Set[Addr]()
+      var todo = addrs.toList
+      while (!todo.isEmpty) {
+        val next = todo.head
+        todo = todo.tail
+        if(!transclo.contains(next)) {
+          transclo += next
+          todo ++= refs(next)
+        }
+      }
+      return transclo
+    }
+
+    private def transclo(adr: Addr): Set[Addr] = transclo(Set(adr))
+
+    def garbage(roots: Set[Addr]): Set[Addr] = {
+      val marked = transclo(roots)
+      val unmarked = content--marked
+      unmarked.keys.toSet
+    }
+
+    def reachable(from: Addr, to: Addr): Boolean = transclo(from).contains(to)
+
+    def toFile(path: String, roots: Set[Addr]) = {
+      val store = this
+      implicit val addrNode = new GraphNode[Addr,Unit] {
+        override def label(adr: Addr): String = s"$adr"
+        override def tooltip(adr: Addr): String = s"${store.counts(adr)}"
+        override def color(adr: Addr): Color = if (roots.contains(adr)) { Colors.Green } else { Colors.White }
+      }
+      val initG = content.keys.foldLeft(Graph.empty[Addr,Unit,Unit])((acc,adr) => if (Address[Addr].isPrimitive(adr)) { acc } else { acc.addNode(adr) })
+      val fullG = content.keys.foldLeft(initG)((acc,adr) => acc.addEdges(refs(adr).map(succ => (adr,(),succ))))
+      GraphDOTOutput.toFile(fullG,())(path)
+    }
+
+    def toPng(path: String, roots: Set[Addr]): Unit = {
+      import sys.process._
+    import java.io.File
+      val tempFile = "temp.dot"
+      toFile(tempFile, roots)
+      s"dot -Tpng ${tempFile} -o ${path}".!
+      new File(tempFile).delete()
+    }
+}
 
 /* WARNING: For efficiency, we currently assume that: refs(join(u,v)) = refs(u) U refs(v), although this assumption can easily be avoided */
-case class GCStore[Addr : Address, Abs : JoinLattice](content: Map[Addr,Abs],
-                                                      refs: Map[Addr,Set[Addr]] = Map[Addr,Set[Addr]]().withDefaultValue(Set())) extends Store[Addr,Abs] {
+case class GCStore[Addr : Address, Abs : JoinLattice]
+  (content: Map[Addr,Abs],
+   refs: Map[Addr,Set[Addr]] = Map[Addr,Set[Addr]]().withDefaultValue(Set()))
+  extends Store[Addr,Abs] {
 
     def keys = content.keys
     def forall(p: ((Addr,Abs)) => Boolean) = content.forall(p)

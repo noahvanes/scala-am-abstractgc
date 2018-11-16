@@ -1,5 +1,6 @@
 import scalaz.Scalaz._
 import Util.MapStrict
+import core.DisjointSet
 
 trait Frame {
   def subsumes(that: Frame): Boolean = {
@@ -36,25 +37,22 @@ abstract class KontStore[KontAddr : KontAddress] {
   def fastEq(that: KontStore[KontAddr]): Boolean = this == that
 }
 
-case class BasicKontStore[KontAddr : KontAddress](content: Map[KontAddr, Set[Kont[KontAddr]]]) extends KontStore[KontAddr] {
+case class BasicKontStore[KontAddr : KontAddress](content: Map[KontAddr, Set[Kont[KontAddr]]], hc: Int = 0) extends KontStore[KontAddr] {
   def keys = content.keys
   def lookup(a: KontAddr) = content.getOrElse(a, Set())
   override def toString = content.toString
   def extend(a: KontAddr, kont: Kont[KontAddr]) = /* Profiler.logRes(s"$this.extend($a, $kont)") */{
-    this.copy(content = content + (a -> (lookup(a) + kont)))
+    val konts = lookup(a)
+    val updatedHC = if (konts.contains(kont)) { hc } else { hc + kont.hashCode() }
+    this.copy(content = content + (a -> (konts + kont)), hc = updatedHC)
   } /* { x => x.toString } */
-  def join(that: KontStore[KontAddr]) = /* Profiler.logRes(s"$this.join($that)") */ {
-    if (that.isInstanceOf[BasicKontStore[KontAddr]]) {
-      this.copy(content = content |+| that.asInstanceOf[BasicKontStore[KontAddr]].content)
-    } else {
-      throw new Exception(s"Incompatible continuation stores: ${this.getClass.getSimpleName} and ${that.getClass.getSimpleName}")
-    }
-  } /* { x => x.toString } */
+  def join(that: KontStore[KontAddr]) = ???
   def forall(p: ((KontAddr, Set[Kont[KontAddr]])) => Boolean) = content.forall(p)
   def subsumes(that: KontStore[KontAddr]) =
     that.forall({ case (a, ks) =>
       ks.forall((k1) => lookup(a).exists(k2 => k2.subsumes(k1)))
     })
+  override lazy val hashCode = hc
 }
 
 case class GCKontStore[Addr : Address, KontAddr : KontAddress](content: Map[KontAddr, Set[Kont[KontAddr]]] = Map[KontAddr, Set[Kont[KontAddr]]](),
@@ -105,40 +103,39 @@ case class GCKontStore[Addr : Address, KontAddr : KontAddress](content: Map[Kont
 
 
 case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress]
-  (content: Map[KontAddr, (Set[Kont[KontAddr]],Set[KontAddr],Set[Addr])] = Map[KontAddr, (Set[Kont[KontAddr]],Set[KontAddr],Set[Addr])](),
-   counts: Map[KontAddr,Int] = Map[KontAddr,Int]().withDefaultValue(0),
-   hc: Int = 0) extends KontStore[KontAddr] {
+  (root: KontAddr,
+   content: Map[KontAddr, (Set[Kont[KontAddr]],Set[KontAddr],Set[Addr])] = Map[KontAddr, (Set[Kont[KontAddr]],Set[KontAddr],Set[Addr])](),
+   froms: Map[KontAddr,Set[KontAddr]] = Map[KontAddr,Set[KontAddr]]().withDefaultValue(Set[KontAddr]()),
+   ds: DisjointSet[KontAddr] = DisjointSet[KontAddr](),
+   hc: Int = 0)
+  extends KontStore[KontAddr] {
 
-  private def decRefUpdate(adr: KontAddr, counts: Map[KontAddr,Int], deleted: List[KontAddr], decremented: Set[KontAddr], addrs: List[Addr]):  (Map[KontAddr,Int], List[KontAddr], Set[KontAddr], List[Addr]) = {
-    val newCount = counts(adr) - 1
-    if (newCount == 0) {
-      content.get(adr) match {
-        case None =>
-          (counts, deleted, decremented, addrs)
-        case Some((_,kaddrs,vrefs)) =>
-          kaddrs.foldLeft((counts, adr::deleted, decremented, addrs++vrefs))((acc,ref) => decRefUpdate(ref,acc._1,acc._2,acc._3,acc._4))
+  def changeRoot(newRoot: KontAddr): (RefCountingKontStore[Addr,KontAddr],Iterable[Addr]) = {
+    var vdeleted = List[Addr]()
+    var updatedFroms = this.froms
+    var updatedContent = content
+    var updatedHC = hc
+    var updatedDS = ds
+    val toDecrement = scala.collection.mutable.Queue[KontAddr](this.root)
+    while(toDecrement.nonEmpty) {
+      val addr = toDecrement.dequeue
+      val addrFroms = updatedFroms(addr)
+      if (addrFroms.isEmpty && addr != newRoot) {
+        // DEALLOC
+        val (konts,kaddrs,vrefs) = this.content(addr)
+        updatedContent = updatedContent - addr
+        updatedDS = updatedDS - addr
+        konts foreach { kont => updatedHC = updatedHC - kont.hashCode() }
+        vdeleted = vdeleted ++ vrefs
+        kaddrs foreach { to =>
+          val updatedToFroms = updatedFroms(to) - addr
+          updatedFroms = updatedFroms.updated(to,updatedToFroms)
+          toDecrement.enqueue(to)
+        }
       }
-    } else {
-      (counts + (adr -> newCount), deleted, decremented + adr, addrs)
     }
-  }
-
-  private def decRef(adr: KontAddr): (RefCountingKontStore[Addr,KontAddr],List[Addr],Set[KontAddr]) = {
-    val (updatedCounts,deleted,decremented,addrs) = decRefUpdate(adr,counts,List(),Set(),List())
-    val updatedHC = deleted.foldLeft(hc)((acc,ref) => {
-      val konts = content.get(ref).map(_._1).getOrElse(Iterable.empty)
-      konts.foldLeft(acc)((acc2,cnt) => acc2 - cnt.hashCode())
-    })
-    (RefCountingKontStore(content--deleted, updatedCounts--deleted, updatedHC), addrs, decremented--deleted)
-  }
-
-  private def incRef(adr: KontAddr): RefCountingKontStore[Addr,KontAddr] =
-    this.copy(counts = counts + (adr -> (counts(adr) + 1)))
-
-  def changeRoot(oldR: KontAddr, newR: KontAddr): (RefCountingKontStore[Addr,KontAddr],Iterable[Addr]) = if (oldR == newR) { (this, Iterable.empty) } else {
-    val (kstore,addrs,decremented) = incRef(newR).decRef(oldR)
-    val potentialGCR = decremented - newR
-    (kstore,addrs)
+    val updatedKStore = RefCountingKontStore(newRoot,updatedContent,updatedFroms,updatedDS,updatedHC)
+    (updatedKStore, vdeleted)
   }
 
   def keys = content.keys
@@ -148,24 +145,60 @@ case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress]
   def extend(adr: KontAddr, kont: Kont[KontAddr]) = extendRC(adr,kont)._1
   def extendRC(adr: KontAddr, kont: Kont[KontAddr]): (RefCountingKontStore[Addr,KontAddr],Iterable[Addr]) = content.get(adr) match {
     case None =>
-      val kontRefs = kont.frame.references
-      val updatedContent = content + (adr->(Set(kont),Set(kont.next),kontRefs))
-      val updatedCounts  = counts  + (kont.next -> (counts(kont.next) + 1))
-      val updatedHC      = hc      + kont.hashCode()
-      (RefCountingKontStore(updatedContent, updatedCounts, updatedHC), kontRefs)
+      val kontRefs       = kont.frame.references
+      val updatedContent = content + (adr -> (Set(kont),Set(kont.next),kontRefs))
+      val updatedFroms   = froms + (kont.next -> (froms(kont.next) + adr))
+      val updatedHC      = hc + kont.hashCode()
+      val updatedKstore  = this.copy(content=updatedContent, froms=updatedFroms, hc=updatedHC)
+      (updatedKstore, kontRefs)
     case Some((konts,_,_)) if konts.contains(kont) =>
       (this, Iterable.empty)
     case Some((konts,kaddrs,addrs)) =>
       val updatedHC = hc + kont.hashCode()
-      val (updatedCounts,updatedKaddrs) = if (kaddrs.contains(kont.next)) { (counts, kaddrs) } else { (counts+(kont.next->(counts(kont.next)+1)), kaddrs+kont.next) }
+      val (updatedFroms,updatedKaddrs, updatedDS) = if (kaddrs.contains(kont.next)) {
+        (froms, kaddrs, ds)
+      } else {
+        (froms+(kont.next->(froms(kont.next)+adr)), kaddrs+kont.next, detectCycle(adr, kont.next))
+      }
       val (addedAddrs,updatedAddrs) = kont.frame.references.foldLeft((List[Addr](), addrs))((acc,ref) =>  if (addrs.contains(ref)) { acc } else (ref::acc._1,acc._2+ref))
-      (RefCountingKontStore(content+(adr->(konts+kont,updatedKaddrs,updatedAddrs)),updatedCounts,updatedHC), addedAddrs)
+      val updatedContent = content + (adr->(konts+kont,updatedKaddrs,updatedAddrs))
+      val updatedKontStore = this.copy(content=updatedContent, froms=updatedFroms, ds=updatedDS, hc=updatedHC)
+      (updatedKontStore, addedAddrs)
+  }
+
+  // NOTE: currently unused, but could serve as an inspiration for forward search in value store
+  private def findPathsFwd(curr: KontAddr, addr: KontAddr, visited: Set[KontAddr]): Set[KontAddr]  = {
+    if (curr == addr) {
+      visited
+    } else {
+      val succs = content.get(curr) match {
+        case Some((_,succs,_)) => succs
+        case None => Set()
+      }
+      succs.filterNot(visited).flatMap(succ => findPathsFwd(succ,addr,visited+succ))
+    }
+  }
+
+  private def detectCycle(from: KontAddr, to: KontAddr): DisjointSet[KontAddr] = {
+    var updatedDS = this.ds
+    var visited = Set[KontAddr](from)
+    val addrs = scala.collection.mutable.Queue[KontAddr](from)
+    while (addrs.nonEmpty) {
+      val addr = addrs.dequeue
+      val prevs = froms(addr)
+      updatedDS = updatedDS.merge(addr,to)
+      prevs.filterNot(visited) foreach { prv =>
+        addrs.enqueue(prv)
+        visited = visited + prv
+      }
+    }
+    return updatedDS
   }
 
   /* TODO */
 
-  def join(that: KontStore[KontAddr]) = throw new Exception("NYI: RefCountingKontStore.join(KontStore[Addr,KontAddr])")
-  def subsumes(that: KontStore[KontAddr]) = throw new Exception("NYI: RefCountingKontStore.subsumes(KontStore[Addr,KontAddr])")
+  def join(that: KontStore[KontAddr]) = throw new Exception("NYI: RefCountingKontStore.join(KontStore[KontAddr])")
+  def subsumes(that: KontStore[KontAddr]) = throw new Exception("NYI: RefCountingKontStore.subsumes(KontStore[KontAddr])")
 
   /* PERFORMANCE OPTIMIZATION */
 
@@ -178,16 +211,46 @@ case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress]
 
   /* DEBUGGING */
 
+  def toFileSCC(path: String) = {
+    var available = List(Colors.Red, Colors.Green, Colors.Pink, Colors.Black, Colors.Yellow)
+    var colors = Map[KontAddr,Color]().withDefaultValue(Colors.White)
+    var clscounts = Map[KontAddr,Int]().withDefaultValue(0)
+    content.keys.foreach { adr =>
+      val cls = ds.find(adr)
+      val newCount = clscounts(cls) + 1
+      clscounts = clscounts + (cls -> newCount)
+      if (newCount == 2) {
+       colors = colors + (cls -> available.head)
+       available = available.tail
+      }
+    }
+    implicit val kontNode = new GraphNode[KontAddr,Unit] {
+      override def label(adr: KontAddr): String = s"$adr"
+      override def color(adr: KontAddr): Color = colors(ds.find(adr))
+    }
+    val initG = Graph.empty[KontAddr,Unit,Unit]
+    val fullG = content.keys.foldLeft(initG)((acc,adr) => acc.addEdges(content(adr)._2.map(succ => (adr,(),succ))))
+    GraphDOTOutput.toFile(fullG,())(path)
+  }
+
   def toFile(path: String, root: KontAddr) = {
     val kstore = this
     implicit val kontNode = new GraphNode[KontAddr,Unit] {
-      override def label(adr: KontAddr): String = s"${adr}"
-      override def tooltip(adr: KontAddr): String = s"${kstore.counts(adr)}"
+      override def label(adr: KontAddr): String = s"$adr"
       override def color(adr: KontAddr): Color = if (adr == root) { Colors.Green } else { Colors.White }
     }
     val initG = Graph.empty[KontAddr,Unit,Unit]
     val fullG = content.keys.foldLeft(initG)((acc,adr) => acc.addEdges(content(adr)._2.map(succ => (adr,(),succ))))
     GraphDOTOutput.toFile(fullG,())(path)
+  }
+
+  def toPngSCC(path: String) = {
+    import sys.process._
+    import java.io.File
+    val tempFile = "temp.dot"
+    toFileSCC(tempFile)
+    s"dot -Tpng ${tempFile} -o ${path}".!
+    new File(tempFile).delete()
   }
 
   def toPng(path: String, root: KontAddr): Unit = {
@@ -199,19 +262,28 @@ case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress]
     new File(tempFile).delete()
   }
 
-  def containsIsolatedCycle(root: KontAddr): Boolean = {
-    var marked = Set[KontAddr]()
-    var todo = List[KontAddr](root)
+  private def transclo(k: KontAddr): Set[KontAddr] = {
+    var transclo = Set[KontAddr]()
+    var todo = List[KontAddr](k)
     while (!todo.isEmpty) {
       val next = todo.head
       todo = todo.tail
-      if(!marked.contains(next)) {
-        marked += next
+      if(!transclo.contains(next)) {
+        transclo += next
         content.get(next).map(d => todo ++= d._2)
       }
     }
-    return (content--marked).size > 0
+    return transclo
   }
+
+  def garbage(root: KontAddr): Set[KontAddr] = {
+    val marked = transclo(root)
+    val unmarked = content--marked
+    unmarked.keys.toSet
+  }
+
+  def reachable(from: KontAddr, to: KontAddr): Boolean = transclo(from).contains(to)
+
 }
 
 case class TimestampedKontStore[KontAddr : KontAddress](content: Map[KontAddr, Set[Kont[KontAddr]]], timestamp: Int) extends KontStore[KontAddr] {
@@ -257,8 +329,8 @@ case class TimestampedKontStore[KontAddr : KontAddress](content: Map[KontAddr, S
 object KontStore {
   def empty[KontAddr : KontAddress]: KontStore[KontAddr] =
     new BasicKontStore[KontAddr](Map())
-  def refCountStore[Addr : Address, KontAddr : KontAddress]: RefCountingKontStore[Addr,KontAddr] =
-    new RefCountingKontStore[Addr,KontAddr]
+  def refCountStore[Addr : Address, KontAddr : KontAddress](root: KontAddr): RefCountingKontStore[Addr,KontAddr] =
+    new RefCountingKontStore[Addr,KontAddr](root, content = Map(root->(Set(),Set(),Set())))
   def gcStore[Addr : Address, KontAddr : KontAddress]: GCKontStore[Addr,KontAddr] =
     new GCKontStore[Addr,KontAddr](Map(), Map().withDefaultValue(Set()), Map().withDefaultValue(Set()))
 }

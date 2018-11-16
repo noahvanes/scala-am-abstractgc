@@ -1,0 +1,40 @@
+;; Expected result: 1
+
+(define (square x) (* x x))
+
+(define (is-trivial-composite? n)
+  (or (= (modulo n 2) 0)
+      (= (modulo n 3) 0)
+      (= (modulo n 5) 0)
+      (= (modulo n 7) 0)
+      (= (modulo n 11) 0)
+      (= (modulo n 13) 0)
+      (= (modulo n 17) 0)
+      (= (modulo n 19) 0)
+      (= (modulo n 23) 0)))
+
+(define (modulo-power base exp n k)
+  (if (= exp 0)
+      (k 1)
+      (if (odd? exp)
+          (modulo-power base (- exp 1) n (lambda (res) (k (modulo (* base res) n))))
+          (modulo-power base (/ exp 2) n (lambda (res) (k (modulo (square res) n)))))))
+
+(define (is-fermat-prime? n iterations k)
+  (if (<= iterations 0)
+      (k #t)
+      (let* ((byte-size (ceiling (/ (log n) (log 2))))
+             (a (random byte-size)))
+          (modulo-power a (- n 1) n (lambda (res) (if (= res 1)
+                                                      (is-fermat-prime? n (- iterations 1) k)
+                                                      (k #f)))))))
+
+(define (generate-fermat-prime byte-size iterations k)
+  (let ((n (random byte-size)))
+    (if (not (is-trivial-composite? n))
+        (is-fermat-prime? n iterations (lambda (res) (if res (k n) (generate-fermat-prime byte-size iterations k))))
+        (generate-fermat-prime byte-size iterations k))))
+
+(define iterations 10)
+(define byte-size 15)
+(generate-fermat-prime byte-size iterations (lambda (V) V))

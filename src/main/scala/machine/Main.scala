@@ -1,3 +1,4 @@
+
 object Main {
 
   import Util._
@@ -6,8 +7,8 @@ object Main {
   val INPUT_DIR = "test/"
   val OUTPUT_DIR = "/Users/nvanes/Desktop/outputs/"
   val OUTPUT_PNG = false
-  val WARMUP_RUNS = 100
-  val TIMEOUT = Duration(3600, "seconds")
+  val RUNS = 1
+  val TIMEOUT = Duration(10, "seconds")
 
   val bounded = new BoundedInteger(7)
   val lattice = new MakeSchemeLattice[Type.S, Concrete.B, bounded.I, Type.F, Type.C, Type.Sym](false)
@@ -38,20 +39,23 @@ object Main {
     val file = INPUT_DIR + name + ".scm"
     replOrFile(Some(file), text => {
       val program = SchemeUtils.computeFreeVar(SchemeUtils.inline(sem.parse(text),sem.initialEnv.toMap))
-      //val program = sem.parse(text)
       println(s">>> RUNNING BENCHMARK ${benchName}")
-      print("warming up")
-      (1 to WARMUP_RUNS).foreach( i => { print(".") ; machine.eval(program,sem,OUTPUT_PNG,Timeout.start(TIMEOUT)) })
+      var result: EvalKontMachine[SchemeExp,lattice.L,address.A,time.T]#Output = null
+      val timings = (1 to RUNS).map( i => {
+        print(".")
+        val t0 = System.nanoTime()
+        result = machine.eval(program,sem,OUTPUT_PNG,Timeout.start(TIMEOUT))
+        val t1 = System.nanoTime()
+        (t1-t0)/1000000
+      })
       println()
-      val t0 = System.nanoTime()
-      val result = machine.eval(program,sem,OUTPUT_PNG,Timeout.start(TIMEOUT))
-      val t1 = System.nanoTime()
       if (result.timedOut) {
-        println(s"<<TIMEOUT after ${result.numberOfStates} states")
+        println(s"<< TIMEOUT after ${result.numberOfStates} states >>")
       } else {
+        val bestTime = timings.min
         println(s"states: ${result.numberOfStates}")
-        println(s"elapsed: ${(t1-t0)/1000000}ms")
-        println(s"rate: ${result.numberOfStates/((t1-t0)/1000000)} states/ms")
+        println(s"elapsed: ${bestTime}ms")
+        println(s"rate: ${result.numberOfStates/bestTime} states/ms")
       }
       if (OUTPUT_PNG) { result.toPng(OUTPUT_DIR + benchName + ".png") }
       println(s"<<< FINISHED BENCHMARK ${benchName}")

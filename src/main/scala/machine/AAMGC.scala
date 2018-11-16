@@ -56,6 +56,11 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
     lazy val storedHashCode = (control, store, kstore, a, t).hashCode()
     override def hashCode = storedHashCode
 
+    override def equals(that: Any): Boolean = that match {
+      case s : State => this.storedHashCode == s.storedHashCode && this.control == s.control && this.store == s.store && this.kstore == s.kstore && this.a == s.a && this.t == s.t
+      case _ => false
+    }
+
     /**
      * Checks whether a states subsumes another, i.e., if it is "bigger". This
      * is used to perform subsumption checking when exploring the state space,
@@ -106,17 +111,7 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
       this.copy(kstore = kstore1, store = store1)
     }
 
-    def stepAnalysis[L](analysis: Analysis[L, Exp, Abs, Addr, Time], current: L): L = control match {
-      case ControlEval(e, env) => analysis.stepEval(e, env, store, t, current)
-      case ControlKont(v) => {
-        val konts = kstore.lookup(a).map({
-          case Kont(frame, _) => analysis.stepKont(v, frame, store, t, current)
-        })
-        if (konts.isEmpty) { current }
-        else { konts.reduceLeft((x, y) => analysis.join(x, y)) }
-      }
-      case ControlError(err) => analysis.error(err, current)
-    }
+    def stepAnalysis[L](analysis: Analysis[L, Exp, Abs, Addr, Time], current: L): L = ???
 
     /**
      * Checks if the current state is a final state. It is the case if it

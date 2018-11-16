@@ -37,7 +37,7 @@ case class BasicEnvironment[Addr : Address](content: Map[String, Addr], hc: Int 
   })
   /* PERFORMANCE OPTIMIZATION */
   override def equals(that: Any) = that match {
-    case env : BasicEnvironment[Addr] => content == env.content
+    case env : BasicEnvironment[Addr] => this.hc == env.hc && this.content == env.content
     case _ => false
   }
   override def hashCode = hc

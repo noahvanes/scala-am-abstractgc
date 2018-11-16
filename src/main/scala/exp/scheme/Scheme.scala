@@ -1,11 +1,13 @@
+import scala.runtime.ScalaRunTime
+
 /**
  * Abstract syntax of Scheme programs (probably far from complete)
  */
-trait SchemeExp {
+trait SchemeExp extends Product {
   val pos: Position
-  lazy val storedHash = super.hashCode
-  override def hashCode = storedHash
+  override lazy val hashCode = ScalaRunTime._hashCode(this)
 }
+
 object SchemeExp {
   implicit val isExp: Expression[SchemeExp] = new Expression[SchemeExp] {
     def pos(e: SchemeExp) = e.pos
