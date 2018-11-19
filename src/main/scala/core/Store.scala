@@ -158,6 +158,17 @@ case class RefCountingStore[Addr : Address, Abs : JoinLattice](content: Map[Addr
 
     def reachable(from: Addr, to: Addr): Boolean = transclo(from).contains(to)
 
+    def calcCounts(external: Map[Addr,Int]): Map[Addr,Int] = {
+      var counts = external
+      refs.foreach(p => {
+        val addrs = p._2
+        addrs.foreach(addr => {
+          counts = counts.updated(addr, counts(addr) + 1)
+        })
+      })
+      return counts
+    }
+
     def toFile(path: String, roots: Set[Addr]) = {
       val store = this
       implicit val addrNode = new GraphNode[Addr,Unit] {

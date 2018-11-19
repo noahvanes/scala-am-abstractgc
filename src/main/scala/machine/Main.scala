@@ -8,10 +8,10 @@ object Main {
   val OUTPUT_DIR = "/Users/nvanes/Desktop/outputs/"
   val OUTPUT_PNG = false
   val RUNS = 1
-  val TIMEOUT = Duration(10, "seconds")
+  val TIMEOUT = Duration(60, "seconds")
 
-  val bounded = new BoundedInteger(7)
-  val lattice = new MakeSchemeLattice[Type.S, Concrete.B, bounded.I, Type.F, Type.C, Type.Sym](false)
+  val bounded = new BoundedInteger(5)
+  val lattice = new MakeSchemeLattice[Type.S, Concrete.B, Type.I, Type.F, Type.C, Type.Sym](false)
   val address = ClassicalAddress
   val time = ZeroCFA
   implicit val isTimestamp = time.isTimestamp
@@ -23,9 +23,9 @@ object Main {
   case object ClassicalGC extends GCStrategy { def name = "ClassicalGC" }
 
   def main(args: Array[String]): Unit = {
-    val current = "collatz"
+    val current = "gabriel/takl"
     //benchmark(current,NoGC)
-    //benchmark(current,ClassicalGC)
+    benchmark(current,ClassicalGC)
     benchmark(current,RefCounting)
   }
 

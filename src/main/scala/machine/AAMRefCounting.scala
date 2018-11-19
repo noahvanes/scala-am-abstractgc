@@ -21,7 +21,6 @@ import java.util.UUID
 class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
     extends EvalKontMachine[Exp, Abs, Addr, Time] {
   def name = "AAMRefCounting"
-  var count = 0
 
   trait KontAddr
   case class NormalKontAddress(exp: Exp, time: Time) extends KontAddr {
@@ -42,84 +41,81 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
     implicit object KontAddrKontAddress extends KontAddress[KontAddr]
   }
 
-  case class AAMFrame(frame: Frame, ret: Boolean) extends Frame {
-    lazy val refs = frame.refs
-    override lazy val hashCode = frame.hashCode
-  }
-
-  case class State(control: Control, store: RefCountingStore[Addr, Abs], kstore: RefCountingKontStore[Addr,KontAddr], a: KontAddr, t: Time, ret: Boolean) {
+  case class State(control: Control, store: RefCountingStore[Addr, Abs], kstore: RefCountingKontStore[Addr,KontAddr], adr: KontAddr, t: Time) {
     override def toString = control.toString
-    lazy val storedHashCode = (control, store, kstore, a, t).hashCode()
+    lazy val storedHashCode = (control, store, kstore, adr, t).hashCode()
     override def hashCode = storedHashCode
 
     override def equals(that: Any): Boolean = that match {
-      case s : State => this.storedHashCode == s.storedHashCode && this.control == s.control && this.store == s.store && this.kstore == s.kstore && this.a == s.a && this.t == s.t
+      case s : State => this.storedHashCode == s.storedHashCode && this.control == s.control && this.store == s.store && this.kstore == s.kstore && this.adr == s.adr && this.t == s.t
       case _ => false
     }
 
-    private def integrate(adr: KontAddr, ret: Boolean, actions: Set[Action[Exp, Abs, Addr]]): List[(State,Iterable[Addr])] =
+    private def updateRefs(prevControl: Control, frmrefs: Iterable[Addr], stkrefs: Iterable[Addr]): State = {
+      val addedRefs = control.references -- prevControl.references
+      val removedRefs = prevControl.references -- control.references
+      val updatedStore = store.incRefs(addedRefs).incRefs(stkrefs).decRefs(removedRefs).decRefs(frmrefs)
+      this.copy(store = updatedStore)
+    }
+
+    private def integrate(frmrefs: Iterable[Addr], actions: Set[Action[Exp, Abs, Addr]]): List[State] =
       actions.toList.map({
         case ActionReachedValue(v, store : RefCountingStore[Addr, Abs], _) =>
-          (State(ControlKont(v), store, kstore, adr, Timestamp[Time].tick(t), ret), Iterable.empty)
+          State(ControlKont(v), store, kstore, adr, Timestamp[Time].tick(t)).updateRefs(control, frmrefs, Iterable.empty)
         case ActionPush(frame, e, env, store : RefCountingStore[Addr, Abs], _) =>
           val next = NormalKontAddress(e, t)
-          val (kstore1,addrs) = kstore.extendRC(next, Kont(AAMFrame(frame,ret), adr))
-          (State(ControlEval(e, env), store, kstore1, next, Timestamp[Time].tick(t), false),addrs)
+          val (kstore1,addrs) = kstore.push(next, frame)
+          State(ControlEval(e, env), store, kstore1, next, Timestamp[Time].tick(t)).updateRefs(control, frmrefs, addrs)
         case ActionEval(e, env, store : RefCountingStore[Addr, Abs], _) =>
-          (State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t), ret), Iterable.empty)
+          State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t)).updateRefs(control, frmrefs, Iterable.empty)
         case ActionStepIn(fexp, _, e, env, store : RefCountingStore[Addr, Abs], _, _) =>
-          (State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t, fexp), true), Iterable.empty)
+          State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t, fexp)).updateRefs(control, frmrefs, Iterable.empty)
         case ActionError(err) =>
-          (State(ControlError(err), store : RefCountingStore[Addr, Abs], kstore, adr, Timestamp[Time].tick(t)), Iterable.empty)
+          State(ControlError(err), store, kstore, adr, Timestamp[Time].tick(t)).updateRefs(control, frmrefs, Iterable.empty)
       })
 
-    private def nextStates(sem: Semantics[Exp, Abs, Addr, Time]): List[(State,Iterable[Addr])] = control match {
-      case ControlEval(e, env) => integrate(a, ret, sem.stepEval(e, env, store, t))
-      case ControlKont(v) => kstore.lookup(a).toList.flatMap({
-        case Kont(AAMFrame(frame,prevret), next) =>
-          integrate(next, prevret, sem.stepKont(v, frame, store, t))
-      })
+    def step(sem: Semantics[Exp, Abs, Addr, Time]): List[State] = control match {
+      case ControlEval(e, env) =>
+        this.integrate(Iterable.empty, sem.stepEval(e, env, store, t))
+      case ControlKont(v) =>
+        kstore.lookup(adr).toList.flatMap({
+          case Kont(frame, next) =>
+            val frmrefs = frame.references
+            val (kstore1, decr) = kstore.pop(next)
+            val store1 = store.incRefs(frmrefs).decRefs(decr)
+            val updatedState = this.copy(adr = next, kstore = kstore1, store = store1)
+            updatedState.integrate(frmrefs, sem.stepKont(v, frame, store1, t))
+        })
       case ControlError(_) => List()
     }
 
-    def step(sem: Semantics[Exp,Abs,Addr,Time]): List[State] = nextStates(sem).map({
-      case (State(control0,store0,kstore0,a0,t0,resret), addrs) => {
-        val (kstore1,decr) = kstore0.changeRoot(a0)
-        val addedRefs = control0.references -- control.references
-        val removedRefs = control.references -- control0.references
-        val store1 = store0.incRefs(addedRefs).incRefs(addrs).decRefs(removedRefs).decRefs(decr)
-        /* DEBUGGING */
-        /*
-        if(0 < kstore1.counts(a) && kstore1.counts(a) < kstore.counts(a) && resret) {
-          if (!(!kstore.containsIsolatedCycle(a) && kstore1.containsIsolatedCycle(a0))) {
-            count = count + 1
-            kstore.toPng(s"/Users/nvanes/Desktop/data/${count}-A.png",a)
-            kstore1.toPng(s"/Users/nvanes/Desktop/data/${count}-B.png",a0)
-          }
+    /*
+    def stepSafe(sem: Semantics[Exp,Abs,Addr,Time]): List[State] = {
+      count = count + 1
+      val succs = this.step(sem)
+      succs.foreach(succ => {
+        var counts = succ.kstore.calcCounts()
+        succ.control.references.foreach(ref => counts = counts.updated(ref, counts(ref) + 1))
+        val calculatedCounts = succ.store.calcCounts(counts)
+        if (calculatedCounts != succ.store.counts) {
+          println(s"[$count] ${this.control} -> ${succ.control}")
+          throw new Exception("Invalid reference counts")
         }
-        */
-        /*
-        val storeRoots = control0.references ++ kstore1.content.flatMap(p => p._2._3) ++ sem.initialEnv.map(_._2)
-        if (store1.garbage(storeRoots).nonEmpty) {
-          store1.toPng(s"/Users/nvanes/Desktop/data/garbage.png", storeRoots)
-          throw new Exception("Garbage in the store...")
-        }
-        */
-        /*
-        count = count + 1
-        if (count % 10 == 0) {
-          kstore.toPngSCC(s"/Users/nvanes/Desktop/data/colored-$count.png")
-        }
-        */
-        State(control0,store1,kstore1,a0,t0,resret)
-      }
-    })
+      })
+      return succs
+    }
+
+    private def hasGarbage(sem: Semantics[Exp,Abs,Addr,Time]): Boolean = {
+      val storeRoots = control.references ++ kstore.content.flatMap(p => p._2._3) ++ sem.initialEnv.map(_._2)
+      kstore.garbage().nonEmpty || store.garbage(storeRoots).nonEmpty
+    }
+    */
 
     def stepAnalysis[L](analysis: Analysis[L, Exp, Abs, Addr, Time], current: L): L = ???
 
     def halted: Boolean = control match {
       case ControlEval(_, _) => false
-      case ControlKont(v) => a == HaltKontAddress
+      case ControlKont(v) => adr == HaltKontAddress
       case ControlError(_) => true
     }
   }
@@ -130,7 +126,7 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
       val control = ControlEval(exp, Environment.empty[Addr])
       val store = Store.refCountStore[Addr, Abs](storeBindings)
       val kstore = KontStore.refCountStore[Addr,KontAddr](HaltKontAddress)
-      State(control, store, kstore, HaltKontAddress, Timestamp[Time].initial(""), true)
+      State(control, store, kstore, HaltKontAddress, Timestamp[Time].initial(""))
     }
 
     import scala.language.implicitConversions
@@ -147,7 +143,7 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
       import org.json4s.jackson.JsonMethods._
       import JSON._
       override def content(s: State) =
-        ("control" -> s.control) ~ ("store" -> s.store) ~ ("kstore" -> s.kstore) ~ ("kont" -> s.a.toString) ~ ("time" -> s.t.toString)
+        ("control" -> s.control) ~ ("store" -> s.store) ~ ("kstore" -> s.kstore) ~ ("kont" -> s.adr.toString) ~ ("time" -> s.t.toString)
     }
   }
 

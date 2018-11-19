@@ -45,15 +45,6 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
     implicit object KontAddrKontAddress extends KontAddress[KontAddr]
   }
 
-  implicit val stateWithKey = new WithKey[State] {
-    type K = KontAddr
-    def key(st: State) = st.a
-  }
-
-  case object ReturnFrame extends Frame {
-    val refs = Set()
-  }
-
   /**
    * A machine state is made of a control component, a value store, a
    * continuation store, and an address representing where the current
@@ -96,8 +87,7 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
         case ActionEval(e, env, store : GCStore[Addr, Abs], _) => State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t)).collect(sem)
         /* When a function is stepped in, we also go to an eval state */
         case ActionStepIn(fexp, _, e, env, store : GCStore[Addr, Abs], _, _) =>
-          val next = CallAddress(fexp,t)
-          State(ControlEval(e, env), store, kstore.extend(next, Kont(ReturnFrame, adr)), next, Timestamp[Time].tick(t, fexp)).collect(sem)
+          State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t, fexp)).collect(sem)
         /* When an error is reached, we go to an error state */
         case ActionError(err) => State(ControlError(err), store, kstore, adr, Timestamp[Time].tick(t)).collect(sem)
       })
@@ -110,7 +100,6 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
       case ControlEval(e, env) => integrate(a, sem.stepEval(e, env, store, t), sem)
       /* In a continuation state, call the semantics' continuation method */
       case ControlKont(v) => kstore.lookup(a).toList.flatMap({
-        case Kont(ReturnFrame, next) => List(State(ControlKont(v), store, kstore, next, t).collect(sem))
         case Kont(frame, next) => integrate(next, sem.stepKont(v, frame, store, t), sem)
       })
       /* In an error state, the state is not able to make a step */
