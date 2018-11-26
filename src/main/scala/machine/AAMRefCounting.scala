@@ -160,17 +160,21 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
     }
   }
 
-   def eval(exp: Exp, sem: Semantics[Exp, Abs, Addr, Time], graph: Boolean, timeout: Timeout): Output = {
-     val s0 = State.inject(exp, Iterable.empty, sem.initialStore)
-     val worklist = scala.collection.mutable.Queue[State](s0)
-     val visited = scala.collection.mutable.Set[State]()
-     while (!(timeout.reached || worklist.isEmpty)) {
-       val s = worklist.dequeue
-       if (visited.add(s) && !s.halted) {
-         val succs = s.step(sem)
-         succs.foreach { succ => worklist.enqueue(succ) }
-       }
-     }
-     AAMOutput(Set(), visited.size, timeout.time, None, timeout.reached)
-   }
+  def eval(exp: Exp, sem: Semantics[Exp, Abs, Addr, Time], graph: Boolean, timeout: Timeout): Output = {
+    val s0 = State.inject(exp, Iterable.empty, sem.initialStore)
+    val worklist = scala.collection.mutable.Queue[State](s0)
+    val visited = scala.collection.mutable.Set[State]()
+    var halted = Set[State]()
+    while (!(timeout.reached || worklist.isEmpty)) {
+      val s = worklist.dequeue
+      if (visited.add(s)) {
+        if (s.halted) {
+          halted = halted + s
+        } else {
+          worklist ++= s.step(sem)
+        }
+      }
+    }
+    AAMOutput(halted, visited.size, timeout.time, None, timeout.reached)
+  }
 }

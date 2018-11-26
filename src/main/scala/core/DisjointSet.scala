@@ -15,7 +15,7 @@ case class DisjointSet[A]
     }
   }
 
-  private def union(r1: A, r2: A): DisjointSet[A] = {
+  def union(r1: A, r2: A): DisjointSet[A] = {
     val rank1 = ranks(r1)
     val rank2 = ranks(r2)
     if (rank1 < rank2) {
@@ -32,6 +32,12 @@ case class DisjointSet[A]
   def equiv(a1: A, a2: A) = find(a1) == find(a2)
 
   def -(elem: A) = this.copy(tree = tree-elem, ranks = ranks-elem)
+
+  def allSets()= {
+    val perCls = tree.groupBy(p => find(p._1)).toList.map(_._2)
+    perCls.map(m => m.keys.toSet ++ m.values.toSet)
+  }
+
 }
 
 object MainDS {

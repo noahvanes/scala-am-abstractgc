@@ -7,11 +7,11 @@ object Main {
   val INPUT_DIR = "test/"
   val OUTPUT_DIR = "/Users/nvanes/Desktop/outputs/"
   val OUTPUT_PNG = false
-  val RUNS = 1
-  val TIMEOUT = Duration(60, "seconds")
+  val RUNS = 100
+  val TIMEOUT = Duration(5, "minutes")
 
-  val bounded = new BoundedInteger(5)
-  val lattice = new MakeSchemeLattice[Type.S, Concrete.B, Type.I, Type.F, Type.C, Type.Sym](false)
+  val bounded = new BoundedInteger(7)
+  val lattice = new MakeSchemeLattice[Type.S, Concrete.B, bounded.I, Type.F, Type.C, Type.Sym](false)
   val address = ClassicalAddress
   val time = ZeroCFA
   implicit val isTimestamp = time.isTimestamp
@@ -21,10 +21,12 @@ object Main {
   case object NoGC extends GCStrategy { def name = "NoGC" }
   case object RefCounting extends GCStrategy { def name = "RefCounting" }
   case object ClassicalGC extends GCStrategy { def name = "ClassicalGC" }
+  case object ClassicalGCAlt extends GCStrategy { def name = "ClassicalGCAlt" }
 
   def main(args: Array[String]): Unit = {
-    val current = "gabriel/takl"
+    val current = "rsa"
     //benchmark(current,NoGC)
+    //benchmark(current,ClassicalGCAlt)
     benchmark(current,ClassicalGC)
     benchmark(current,RefCounting)
   }
@@ -34,6 +36,7 @@ object Main {
       case NoGC => new AAM[SchemeExp, lattice.L, address.A, time.T]
       case RefCounting => new AAMRefCounting[SchemeExp, lattice.L, address.A, time.T]
       case ClassicalGC => new AAMGC[SchemeExp, lattice.L, address.A, time.T]
+      case ClassicalGCAlt => new AAMGC2[SchemeExp, lattice.L, address.A, time.T]
     }
     val benchName = s"${name}-${time.isTimestamp.name}-${gcStrategy.name}"
     val file = INPUT_DIR + name + ".scm"
@@ -56,6 +59,7 @@ object Main {
         println(s"states: ${result.numberOfStates}")
         println(s"elapsed: ${bestTime}ms")
         println(s"rate: ${result.numberOfStates/bestTime} states/ms")
+        println(result.finalValues)
       }
       if (OUTPUT_PNG) { result.toPng(OUTPUT_DIR + benchName + ".png") }
       println(s"<<< FINISHED BENCHMARK ${benchName}")

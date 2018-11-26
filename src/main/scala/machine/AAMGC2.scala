@@ -16,7 +16,7 @@
  * be evaluated within this environment, whereas a continuation state only
  * contains the value reached.
  */
-class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
+class AAMGC2[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
     extends EvalKontMachine[Exp, Abs, Addr, Time] {
   def name = "AAMGC"
 
@@ -108,7 +108,7 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
 
     private def collect(sem: Semantics[Exp,Abs,Addr,Time]): State = {
       val (kstore1,addrs) = kstore.collect(a)
-      val store1 = store.collect(control.references ++ sem.initialEnv.map(_._2) ++ addrs)
+      val store1 = store
       this.copy(kstore = kstore1, store = store1)
     }
 
@@ -138,7 +138,6 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
         case _: ControlKont => Colors.Yellow
         case _: ControlError => Colors.Red
       }
-
       import org.json4s._
       import org.json4s.JsonDSL._
       import org.json4s.jackson.JsonMethods._
@@ -176,21 +175,21 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
     * program (otherwise it will just visit every reachable state). A @param
     * timeout can also be given.
     */
-   def eval(exp: Exp, sem: Semantics[Exp, Abs, Addr, Time], graph: Boolean, timeout: Timeout): Output = {
-     val s0 = State.inject(exp, Iterable.empty, sem.initialStore)
-     val worklist = scala.collection.mutable.Queue[State](s0)
-     val visited = scala.collection.mutable.Set[State]()
-     var halted = Set[State]()
-     while (!(timeout.reached || worklist.isEmpty)) {
-       val s = worklist.dequeue
-       if (visited.add(s)) {
-         if (s.halted) {
-           halted = halted + s
-         } else {
-           worklist ++= s.step(sem)
-         }
-       }
-     }
-     AAMOutput(halted, visited.size, timeout.time, None, timeout.reached)
-   }
+    def eval(exp: Exp, sem: Semantics[Exp, Abs, Addr, Time], graph: Boolean, timeout: Timeout): Output = {
+      val s0 = State.inject(exp, Iterable.empty, sem.initialStore)
+      val worklist = scala.collection.mutable.Queue[State](s0)
+      val visited = scala.collection.mutable.Set[State]()
+      var halted = Set[State]()
+      while (!(timeout.reached || worklist.isEmpty)) {
+        val s = worklist.dequeue
+        if (visited.add(s)) {
+          if (s.halted) {
+            halted = halted + s
+          } else {
+            worklist ++= s.step(sem)
+          }
+        }
+      }
+      AAMOutput(halted, visited.size, timeout.time, None, timeout.reached)
+    }
 }

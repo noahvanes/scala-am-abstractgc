@@ -178,7 +178,7 @@ case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress]
 
   @scala.annotation.tailrec
   private def detectCycle(currentAddr: KontAddr, currentDS: DisjointSet[KontAddr]): DisjointSet[KontAddr] =
-    in.get(currentAddr) match {
+    in.get(this.ds.find(currentAddr)) match {
       case None => currentDS
       case Some(nextAddr) => detectCycle(nextAddr, currentDS.merge(currentAddr,root))
     }
