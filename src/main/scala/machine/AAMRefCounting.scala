@@ -22,6 +22,8 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
     extends EvalKontMachine[Exp, Abs, Addr, Time] {
   def name = "AAMRefCounting"
 
+  var count = 0
+
   trait KontAddr
   case class NormalKontAddress(exp: Exp, time: Time) extends KontAddr {
     override def toString = s"$exp"
@@ -104,8 +106,10 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
       })
       return succs
     }
+    */
 
-    private def hasGarbage(sem: Semantics[Exp,Abs,Addr,Time]): Boolean = {
+    /*
+    def hasGarbage(sem: Semantics[Exp,Abs,Addr,Time]): Boolean = {
       val storeRoots = control.references ++ kstore.content.flatMap(p => p._2._3) ++ sem.initialEnv.map(_._2)
       kstore.garbage().nonEmpty || store.garbage(storeRoots).nonEmpty
     }

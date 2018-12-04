@@ -114,11 +114,11 @@ case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress]
     if(ds.equiv(root,newRoot)) {
       (this.copy(root = newRoot), Iterable.empty)
     } else {
-      var vdeleted = List[Addr]()
+      var updatedContent = this.content
       var updatedIn = this.in
-      var updatedContent = content
-      var updatedHC = hc
-      var updatedDS = ds
+      var updatedHC = this.hc
+      var updatedDS = this.ds
+      var vdeleted = List[Addr]()
       val toDealloc = scala.collection.mutable.Queue[KontAddr](this.root)
       var marked = Set[KontAddr](this.root, newRoot) // do not touch the new root!
                                                      // we can show that oldRoot -> newRoot is the only
