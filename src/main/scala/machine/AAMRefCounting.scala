@@ -30,11 +30,6 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
     lazy val storedHashCode = (exp,time).hashCode
     override def hashCode = storedHashCode
   }
-  case class CallAddress(fexp: Exp, time: Time) extends KontAddr {
-    override def toString = s"Call($fexp)"
-    lazy val storedHashCode = (fexp,time).hashCode
-    override def hashCode = storedHashCode
-  }
   case object HaltKontAddress extends KontAddr {
     override def toString = "HALT"
     override def hashCode = 0
@@ -99,19 +94,28 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
         var counts = succ.kstore.calcCounts()
         succ.control.references.foreach(ref => counts = counts.updated(ref, counts(ref) + 1))
         val calculatedCounts = succ.store.calcCounts(counts)
-        if (calculatedCounts != succ.store.counts) {
-          println(s"[$count] ${this.control} -> ${succ.control}")
+        if (calculatedCounts != succ.store.in) {
+          val current = this
+          val time = count
+          println()
+          println(calculatedCounts)
+          println(succ.store.in)
+          //println(s"[$count] ${this.control} -> ${succ.control}")
           throw new Exception("Invalid reference counts")
         }
       })
-      return succs
+      succs
     }
-    */
 
-    /*
-    def hasGarbage(sem: Semantics[Exp,Abs,Addr,Time]): Boolean = {
+
+    def checkForGarbage(sem: Semantics[Exp,Abs,Addr,Time]): Unit = {
       val storeRoots = control.references ++ kstore.content.flatMap(p => p._2._3) ++ sem.initialEnv.map(_._2)
-      kstore.garbage().nonEmpty || store.garbage(storeRoots).nonEmpty
+      if(kstore.garbage().nonEmpty) {
+        throw new Exception("garbage in the kstore!")
+      }
+      if(store.garbage(storeRoots).nonEmpty) {
+        throw new Exception(s"garbage in the store!: ${store.garbage(storeRoots)}")
+      }
     }
     */
 

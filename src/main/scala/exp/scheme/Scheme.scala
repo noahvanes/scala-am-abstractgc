@@ -858,9 +858,10 @@ object SchemeUtils {
       fv_bds ++ fv_bdy
     case SchemeLetStar(bindings, body, pos) =>
       val (nams,fv_bds) = bindings.foldLeft((Set[String](),Set[String]()))((acc,bnd) => {
-        val (acc_names,acc_fvs) = acc
-        val (name,binding_exp) = bnd
-        (acc_names + name.name, fv(binding_exp) -- acc_names)
+        val (acc_names, acc_fvs) = acc
+        val (name, binding_exp) = bnd
+        val new_fvs = fv(binding_exp) -- acc_names
+        (acc_names + name.name, acc_fvs ++ new_fvs)
       })
       val fv_bdy = body.flatMap(fv).toSet -- nams
       fv_bds ++ fv_bdy

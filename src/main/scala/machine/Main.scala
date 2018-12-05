@@ -5,10 +5,11 @@ object Main {
   import scala.concurrent.duration.Duration
 
   val INPUT_DIR = "test/"
+  val BENCHMARK_DIR = "/Users/nvanes/Desktop/benchmarks/"
   val OUTPUT_DIR = "/Users/nvanes/Desktop/outputs/"
   val OUTPUT_PNG = false
-  val RUNS = 1
-  val TIMEOUT = Duration(5, "minutes")
+  val RUNS = 100
+  val TIMEOUT = Duration(1, "minutes")
 
   val bounded = new BoundedInteger(7)
   val lattice = new MakeSchemeLattice[Type.S, Concrete.B, bounded.I, Type.F, Type.C, Type.Sym](false)
@@ -24,11 +25,11 @@ object Main {
   case object ClassicalGCAlt extends GCStrategy { def name = "ClassicalGCAlt" }
 
   def main(args: Array[String]): Unit = {
-    val current = "oddeven"
-    //benchmark(current,NoGC)
-    //benchmark(current,ClassicalGCAlt)
-    benchmark(current,ClassicalGC)
-    benchmark(current,RefCounting)
+    val current = "primtest"
+    //benchmark(current, NoGC)
+    //benchmark(current, ClassicalGCAlt)
+    benchmark(current, ClassicalGC)
+    benchmark(current, RefCounting)
   }
 
   def benchmark(name: String, gcStrategy: GCStrategy): Unit = {
@@ -38,11 +39,11 @@ object Main {
       case ClassicalGC => new AAMGC[SchemeExp, lattice.L, address.A, time.T]
       case ClassicalGCAlt => new AAMGC2[SchemeExp, lattice.L, address.A, time.T]
     }
-    val benchName = s"${name}-${time.isTimestamp.name}-${gcStrategy.name}"
+    val benchName = s"$name-${time.isTimestamp.name}-${gcStrategy.name}"
     val file = INPUT_DIR + name + ".scm"
     replOrFile(Some(file), text => {
       val program = SchemeUtils.computeFreeVar(SchemeUtils.inline(sem.parse(text),sem.initialEnv.toMap))
-      println(s">>> RUNNING BENCHMARK ${benchName}")
+      println(s">>> RUNNING BENCHMARK $benchName")
       var result: EvalKontMachine[SchemeExp,lattice.L,address.A,time.T]#Output = null
       val timings = (1 to RUNS).map( i => {
         print(".")
@@ -59,10 +60,10 @@ object Main {
         println(s"states: ${result.numberOfStates}")
         println(s"elapsed: ${bestTime}ms")
         println(s"rate: ${result.numberOfStates/bestTime} states/ms")
-        println(result.finalValues)
+        println(s"results: ${result.finalValues}")
       }
       if (OUTPUT_PNG) { result.toPng(OUTPUT_DIR + benchName + ".png") }
-      println(s"<<< FINISHED BENCHMARK ${benchName}")
+      println(s"<<< FINISHED BENCHMARK $benchName")
     })
   }
 }
