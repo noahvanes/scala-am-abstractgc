@@ -14,6 +14,7 @@
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="library" name="sbt: com.fasterxml.jackson.core:jackson-annotations:2.8.0:jar" level="project" />
+    <orderEntry type="library" name="sbt: au.com.bytecode:opencsv:2.4:jar" level="project" />
     <orderEntry type="library" name="sbt: com.fasterxml.jackson.core:jackson-core:2.8.4:jar" level="project" />
     <orderEntry type="library" name="sbt: com.fasterxml.jackson.core:jackson-databind:2.8.4:jar" level="project" />
     <orderEntry type="library" name="sbt: com.github.scopt:scopt_2.12:3.7.0:jar" level="project" />

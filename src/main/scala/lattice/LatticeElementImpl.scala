@@ -304,6 +304,130 @@ class BoundedInteger(bound: Int) {
   }
 }
 
+class KPointsTo(limit: Int) {
+
+  sealed trait L[+A]
+  case object Top extends L[Nothing]
+  case class Constants[A](xs: Set[A]) extends L[A]
+
+  type S = L[String]
+  type I = L[Int]
+  type F = L[Double]
+  type C = L[Char]
+  type Sym = L[String]
+
+  object L {
+
+    implicit def constantIsMonoid[A]: Monoid[L[A]] = new Monoid[L[A]] {
+      def zero: L[A] = Constants(Set.empty)
+      def append(x: L[A], y: => L[A]): L[A] = (x, y) match {
+        case (Constants(xs), Constants(ys)) if xs.size + ys.size <= limit => Constants(xs ++ ys)
+        case _ => Top
+      }
+    }
+
+    class BaseInstance[A : Order](typeName: String) extends LatticeElement[L[A]] {
+
+      def name = s"$limit-pointsTo-$typeName"
+      override def shows(x: L[A]): String = x match {
+        case Top => typeName
+        case Constants(xs) => xs.toString()
+      }
+      val bottom: L[A] = Monoid[L[A]].zero
+      val top: L[A] = Top
+      def join(x: L[A], y: => L[A]): L[A] = Monoid[L[A]].append(x, y)
+      def meet(x: L[A], y: => L[A]): L[A] = (x,y) match {
+        case (Top, _) => y
+        case (_, Top) => x
+        case (Constants(xs),Constants(ys)) => Constants(xs.intersect(ys))
+      }
+      def subsumes(x: L[A], y: => L[A]): Boolean = (x,y) match {
+        case (Top, _) => true
+        case (_, Top) => false
+        case (Constants(xs),Constants(ys)) => ys.subsetOf(xs)
+      }
+
+      def inject(x: A): L[A] = if (limit == 0) { top } else { Constants(Set(x)) }
+
+      private def fold[R : LatticeElement](x: L[A], f: A => R): R = x match {
+        case Constants(xs) => xs.foldMap(f)
+        case Top => LatticeElement[R].top
+      }
+
+      protected def unaryOp[R : LatticeElement](f: A => R)(a1: L[A]): R = fold(a1, f)
+      protected def binaryOp[R : LatticeElement](f: (A,A) => R)(a1: L[A], a2: L[A]) = fold(a1, a1 => fold(a2, a2 => f(a1,a2)))
+
+      def eql[B: BoolLattice](x: L[A], y: L[A]): B = binaryOp((a1,a2) => BoolLattice[B].inject(a1 == a2))(x,y)
+
+      def order(x: L[A], y: L[A]): Ordering = (x, y) match {
+        case (Top, Top) => Ordering.EQ
+        case (Top, _) => Ordering.GT
+        case (_, Top) => Ordering.LT
+        case (Constants(xs),Constants(ys)) => Order[Set[A]].order(xs,ys)
+      }
+      def cardinality(x: L[A]): Cardinality = x match {
+        case Top => CardinalityInf
+        case Constants(xs) => CardinalityPrimitiveLikeNumber(xs.size)
+      }
+    }
+
+    implicit val stringCP: StringLattice[S] = new BaseInstance[String]("Str") with StringLattice[S] {
+      private implicit val isLatticeElement: LatticeElement[S] = this
+      def length[I : IntLattice](s: S): I = unaryOp(s => IntLattice[I].inject(s.length))(s)
+      def append(s1: S, s2: S): S = binaryOp((s1,s2) => inject(s1 ++ s2))(s1,s2)(isLatticeElement)
+      def lt[B : BoolLattice](s1: S, s2: S): B = binaryOp((s1,s2) => BoolLattice[B].inject(s1 < s2))(s1,s2)
+      def toSymbol[Sym : SymbolLattice](s: S): Sym = unaryOp(s => SymbolLattice[Sym].inject(s))(s)
+    }
+
+    implicit val intCP: IntLattice[I] = new BaseInstance[Int]("Int") with IntLattice[I] {
+      private implicit val isLatticeElement: LatticeElement[I] = this
+      private def binop(op: (Int, Int) => Int, n1: I, n2: I) = binaryOp((n1,n2) => inject(op(n1,n2)))(n1,n2)
+      def toReal[F : RealLattice](n: I): F = unaryOp(n => RealLattice[F].inject(n))(n)
+      def random(n: I): I = Top   // TODO: improve this when (n <= limit)
+      def plus(n1: I, n2: I): I = binop(_ + _, n1, n2)
+      def minus(n1: I, n2: I): I = binop(_ - _, n1, n2)
+      def times(n1: I, n2: I): I = binop(_ * _, n1, n2)
+      def div[F : RealLattice](n1: I, n2: I): F = binaryOp((x,y) => RealLattice[F].inject(x / y.toDouble))(n1,n2)
+      def quotient(n1: I, n2: I): I = binop(_ / _, n1, n2)
+      def modulo(n1: I, n2: I): I = binop(SchemeOps.modulo, n1, n2)
+      def remainder(n1: I, n2: I): I = binop(SchemeOps.remainder, n1, n2)
+      def lt[B : BoolLattice](n1: I, n2: I): B = binaryOp((n1,n2) => BoolLattice[B].inject(n1 < n2))(n1,n2)
+      def toString[S : StringLattice](n: I): S = unaryOp(n => StringLattice[S].inject(n.toString))(n)
+    }
+
+    implicit val floatCP: RealLattice[F] = new BaseInstance[Double]("Real") with RealLattice[F] {
+      private implicit val isLatticeElement: LatticeElement[F] = this
+      private def binop(op: (Double, Double) => Double, n1: F, n2: F) = binaryOp((n1,n2) => inject(op(n1,n2)))(n1,n2)
+      def toInt[I : IntLattice](n: F): I = unaryOp(f => IntLattice[I].inject(f.toInt))(n)
+      def ceiling(n: F): F = unaryOp(f => inject(f.ceil))(n)
+      def floor(n: F): F = unaryOp(f => inject(f.floor))(n)
+      def round(n: F): F = unaryOp(f => inject(SchemeOps.round(f)))(n)
+      def random(n: F): F = Top
+      def log(n: F): F = unaryOp(f => inject(scala.math.log(f)))(n)
+      def sin(n: F): F = unaryOp(f => inject(scala.math.sin(f)))(n)
+      def asin(n: F): F = unaryOp(f => inject(scala.math.asin(f)))(n)
+      def cos(n: F): F = unaryOp(f => inject(scala.math.cos(f)))(n)
+      def acos(n: F): F = unaryOp(f => inject(scala.math.acos(f)))(n)
+      def tan(n: F): F = unaryOp(f => inject(scala.math.tan(f)))(n)
+      def atan(n: F): F = unaryOp(f => inject(scala.math.atan(f)))(n)
+      def sqrt(n: F): F = unaryOp(f => inject(scala.math.sqrt(f)))(n)
+      def plus(n1: F, n2: F): F = binop(_ + _, n1, n2)
+      def minus(n1: F, n2: F): F = binop(_ - _, n1, n2)
+      def times(n1: F, n2: F): F = binop(_ * _, n1, n2)
+      def div(n1: F, n2: F): F = binop(_ / _, n1, n2)
+      def lt[B : BoolLattice](n1: F, n2: F): B = binaryOp((f1,f2) => BoolLattice[B].inject(f1 < f2))(n1,n2)
+      def toString[S : StringLattice](n: F): S = unaryOp(n => StringLattice[S].inject(n.toString))(n)
+    }
+
+    implicit val charCP: CharLattice[C] = new BaseInstance[Char]("Char") with CharLattice[C] {}
+
+    implicit val symCP: SymbolLattice[Sym] = new BaseInstance[String]("Symbol") with SymbolLattice[Sym] {
+      def toString[S : StringLattice](s: Sym): S = unaryOp(s => StringLattice[S].inject(s))(s)
+    }
+
+  }
+}
+
 object Type {
   sealed trait T
   case object Top extends T

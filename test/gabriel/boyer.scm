@@ -46,11 +46,10 @@
          (put (car (cadr term))
               (quote lemmas)
               (cons term (get-null (car (cadr term)) (quote lemmas)))))
-        (else (error 'add-lemma "ADD-LEMMA did not like term:  " term))))
+        (else (error "ADD-LEMMA did not like term"))))
 
 (define (add-lemma-lst lst)
-  (cond ((null? lst)
-         #t)
+  (cond ((null? lst) #t)
         (else (add-lemma (car lst))
               (add-lemma-lst (cdr lst)))))
 

@@ -10,6 +10,7 @@ libraryDependencies += "jline" % "jline" % "2.14.5"
 libraryDependencies += "org.json4s" %% "json4s-native" % "3.5.3"
 libraryDependencies += "org.json4s" %% "json4s-jackson" % "3.5.3"
 
+libraryDependencies += "au.com.bytecode" % "opencsv" % "2.4"
 libraryDependencies += "org.scalatest" %% "scalatest" % "3.0.3" % "test"
 libraryDependencies += "org.scalacheck" %% "scalacheck" % "1.13.5" % "test"
 

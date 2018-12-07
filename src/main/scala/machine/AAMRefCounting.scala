@@ -107,7 +107,6 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
       succs
     }
 
-
     def checkForGarbage(sem: Semantics[Exp,Abs,Addr,Time]): Unit = {
       val storeRoots = control.references ++ kstore.content.flatMap(p => p._2._3) ++ sem.initialEnv.map(_._2)
       if(kstore.garbage().nonEmpty) {
@@ -118,6 +117,7 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
       }
     }
     */
+
 
     def stepAnalysis[L](analysis: Analysis[L, Exp, Abs, Addr, Time], current: L): L = ???
 
