@@ -161,7 +161,7 @@ object Main {
   /* MAIN ENTRY POINT */
 
   def main(args: Array[String]): Unit = {
-    val results = compareOn(List(simpleLoop), lattice=constantPropLattice, runs=1, timeout=1)
-    //exportCSV(results, filename = "tmp")
+    val results = compareOn(List(cpstak), runs=1, timeout=1)
+    exportCSV(results, filename = "tmp")
   }
 }

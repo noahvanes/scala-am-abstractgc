@@ -131,6 +131,16 @@ abstract class EvalKontMachine[Exp : Expression, Abs : JoinLattice, Addr : Addre
     }
     val references = JoinLattice[Abs].references(v)
   }
+
+  case class ControlCall(fn: Abs, fexp: Exp, args: List[(Exp,Abs)]) extends Control {
+    override def toString = s"${fexp}(${args.map(_._1)})"
+    def subsumes(that: Control) = that match {
+      case ControlCall(fn2,fexp2,args2) =>
+        JoinLattice[Abs].subsumes(fn,fn2) && fexp.equals(fexp2) && args2.size == args.size && args2.zip(args).forall({ case ((exp2,arg2),(exp,arg)) => exp.equals(exp2) && JoinLattice[Abs].subsumes(arg,arg2) })
+      case _ => false
+    }
+    val references = args.toSet.flatMap((arg: (Exp,Abs)) => JoinLattice[Abs].references(arg._2)) ++ JoinLattice[Abs].references(fn)
+  }
   /**
    * Or an error component, in case an error is reached (e.g., incorrect number
    * of arguments in a function call)

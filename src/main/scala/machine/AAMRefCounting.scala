@@ -67,6 +67,8 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
           State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t)).updateRefs(control, frmrefs, Iterable.empty)
         case ActionStepIn(fexp, _, e, env, store : RefCountingStore[Addr, Abs], _, _) =>
           State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t, fexp)).updateRefs(control, frmrefs, Iterable.empty)
+        case ActionCall(fn, fexp, args, store : RefCountingStore[Addr, Abs], _) =>
+          State(ControlCall(fn,fexp,args), store, kstore, adr, Timestamp[Time].tick(t)).updateRefs(control, frmrefs, Iterable.empty)
         case ActionError(err) =>
           State(ControlError(err), store, kstore, adr, Timestamp[Time].tick(t)).updateRefs(control, frmrefs, Iterable.empty)
       })
@@ -74,6 +76,8 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
     def step(sem: Semantics[Exp, Abs, Addr, Time]): List[State] = control match {
       case ControlEval(e, env) =>
         this.integrate(Iterable.empty, sem.stepEval(e, env, store, t))
+      case ControlCall(fn,fexp,args) =>
+        this.integrate(Iterable.empty, sem.stepCall(fn, fexp, args, store, t))
       case ControlKont(v) =>
         kstore.lookup(adr).toList.flatMap({
           case Kont(frame, next) =>
@@ -122,7 +126,7 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
     def stepAnalysis[L](analysis: Analysis[L, Exp, Abs, Addr, Time], current: L): L = ???
 
     def halted: Boolean = control match {
-      case ControlEval(_, _) => false
+      case ControlEval(_, _) | ControlCall(_,_,_) => false
       case ControlKont(v) => adr == HaltKontAddress
       case ControlError(_) => true
     }
@@ -142,6 +146,7 @@ class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time :
       override def label(s: State) = s.toString
       override def color(s: State) = s.control match {
         case _: ControlEval => Colors.White
+        case _: ControlCall => Colors.Pink
         case _: ControlKont if s.halted => Colors.Green
         case _: ControlKont => Colors.Yellow
         case _: ControlError => Colors.Red

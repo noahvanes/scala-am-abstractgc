@@ -103,7 +103,10 @@ class BaseSchemeSemantics[V : IsSchemeLattice, Addr : Address, Time : Timestamp]
   def conditional(v: V, t: => Actions, f: => Actions): Actions =
     (if (IsSchemeLattice[V].isTrue(v)) t else Action.none) ++ (if (IsSchemeLattice[V].isFalse(v)) f else Action.none)
 
-  def evalCall(function: V, fexp: SchemeExp, argsv: List[(SchemeExp, V)], store: Sto, t: Time): Actions = {
+  def evalCall(function: V, fexp: SchemeExp, argsv: List[(SchemeExp, V)], store: Sto, t: Time): Actions =
+    Action.call(function, fexp, argsv, store)
+
+  override def stepCall(function: V, fexp: SchemeExp, argsv: List[(SchemeExp,V)], store: Store[Addr, V], t: Time): Set[Action[SchemeExp, V, Addr]] = {
     val fromClo: Actions = IsSchemeLattice[V].getClosures[SchemeExp, Addr](function).map({
       case (SchemeLambda(args, body, pos), env1) =>
         if (args.length == argsv.length) {

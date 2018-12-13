@@ -88,6 +88,8 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
         /* When a function is stepped in, we also go to an eval state */
         case ActionStepIn(fexp, _, e, env, store : GCStore[Addr, Abs], _, _) =>
           State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t, fexp)).collect(sem)
+        case ActionCall(fn, fexp, args, store: GCStore[Addr,Abs], _) =>
+          State(ControlCall(fn,fexp,args),store,kstore,adr,Timestamp[Time].tick(t)).collect(sem)
         /* When an error is reached, we go to an error state */
         case ActionError(err) => State(ControlError(err), store, kstore, adr, Timestamp[Time].tick(t)).collect(sem)
       })
@@ -96,13 +98,11 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
      * Computes the set of states that follow the current state
      */
     def step(sem: Semantics[Exp, Abs, Addr, Time]): List[State] = control match {
-      /* In a eval state, call the semantic's evaluation method */
       case ControlEval(e, env) => integrate(a, sem.stepEval(e, env, store, t), sem)
-      /* In a continuation state, call the semantics' continuation method */
+      case ControlCall(fn,fexp,args) => integrate(a, sem.stepCall(fn,fexp,args,store,t), sem)
       case ControlKont(v) => kstore.lookup(a).toList.flatMap({
         case Kont(frame, next) => integrate(next, sem.stepKont(v, frame, store, t), sem)
       })
-      /* In an error state, the state is not able to make a step */
       case ControlError(_) => List()
     }
 
@@ -119,7 +119,7 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
      * reached the end of the computation, or an error
      */
     def halted: Boolean = control match {
-      case ControlEval(_, _) => false
+      case ControlEval(_, _) | ControlCall(_,_,_) => false
       case ControlKont(v) => a == HaltKontAddress
       case ControlError(_) => true
     }

@@ -31,6 +31,10 @@ abstract class Semantics[Exp : Expression, Abs : JoinLattice, Addr : Address, Ti
    * the topmost frame is frame
    */
   def stepKont(v: Abs, frame: Frame, store: Store[Addr, Abs], t: Time): Set[Action[Exp, Abs, Addr]]
+  /**
+    * Defines what actions should be taken when a function fn is called with arguments args
+    */
+  def stepCall(fn: Abs, fexp: Exp, args: List[(Exp,Abs)], store: Store[Addr,Abs], t: Time): Set[Action[Exp,Abs,Addr]] = throw new Exception("NYI -- stepCall")
 
   /** WIP */
   def stepReceive(self: Any /* TODO */, mname: String, margsv: List[Abs], d: Exp,
@@ -192,6 +196,8 @@ class ActionHelpers[Exp : Expression, Abs : JoinLattice, Addr : Address] {
     new ActionEval(e, env, store, effects)
   def stepIn(fexp: Exp, clo: (Exp, Env), e: Exp, env: Env, store: Sto, argsv: List[(Exp, Abs)], effects: Effs = Set.empty): Act =
     new ActionStepIn(fexp, clo, e, env, store, argsv, effects)
+  def call(fn: Abs, fexp: Exp, args: List[(Exp,Abs)], store: Sto, effects: Effs = Set.empty): Act =
+    new ActionCall(fn, fexp, args, store, effects)
   def error(err: SemanticError): Act =
     new ActionError(err)
   def spawn[TID : ThreadIdentifier](t: TID, e: Exp, env: Env, store: Sto, act: Act, effects: Effs = Set.empty): Act =
@@ -224,6 +230,14 @@ case class ActionPush[Exp : Expression, Abs : JoinLattice, Addr : Address]
  */
 case class ActionEval[Exp : Expression, Abs : JoinLattice, Addr : Address]
   (e: Exp, env: Environment[Addr], store: Store[Addr, Abs],
+    effects: Set[Effect[Addr]] = Set[Effect[Addr]]())
+    extends Action[Exp, Abs, Addr] {
+  def addEffects(effs: Set[Effect[Addr]]) = this.copy(effects = effects ++ effs)
+}
+
+case class ActionCall[Exp : Expression, Abs : JoinLattice, Addr : Address]
+  (fn: Abs, fexp: Exp, args: List[(Exp,Abs)],
+    store: Store[Addr,Abs],
     effects: Set[Effect[Addr]] = Set[Effect[Addr]]())
     extends Action[Exp, Abs, Addr] {
   def addEffects(effs: Set[Effect[Addr]]) = this.copy(effects = effects ++ effs)
