@@ -348,6 +348,66 @@ case class GCStore[Addr : Address, Abs : JoinLattice]
     override def hashCode = storedHashCode
 }
 
+class StoreJoinException extends Exception
+case class GCStoreAlt[Addr : Address, Abs : JoinLattice]
+  (content: Map[Addr,Abs],
+   refs: Map[Addr,Set[Addr]] = Map[Addr,Set[Addr]]().withDefaultValue(Set()),
+   marked: Boolean = false)
+  extends Store[Addr,Abs] {
+
+  def keys = content.keys
+  def forall(p: ((Addr,Abs)) => Boolean) = content.forall(p)
+  def lookup(a: Addr) = content.get(a)
+  def lookupBot(a: Addr) = content.get(a).getOrElse(JoinLattice[Abs].bottom)
+
+  def update(a: Addr, v: Abs) = extend(a,v)
+  def updateOrExtend(a: Addr, v: Abs) = extend(a,v)
+
+  private def mark(adr: Addr, marked: Set[Addr]): Set[Addr] =
+    if (marked.contains(adr)) {
+      marked
+    } else {
+      refs(adr).foldLeft(marked + adr)((acc,ref) => mark(ref,acc))
+    }
+
+  private def sweep(marked: Set[Addr]): GCStoreAlt[Addr,Abs] = {
+    val updatedContent = content.filterKeysStrict(marked)
+    val updatedRefs = refs.filterKeysStrict(marked).withDefaultValue(Set())
+    GCStoreAlt(updatedContent,updatedRefs,false)
+  }
+
+  def collect(roots: Set[Addr]): GCStoreAlt[Addr,Abs] = {
+    val marked = roots.foldLeft(Set[Addr]())((acc,ref) => mark(ref,acc))
+    sweep(marked)
+  }
+
+  def extend(adr: Addr, v: Abs) = {
+    val abstractCountNonZero = content.contains(adr)
+    if (marked && abstractCountNonZero) {
+      throw new StoreJoinException()
+    }
+    val updatedAdrRefs = refs(adr) ++ JoinLattice[Abs].references(v)
+    val updatedValue = if (abstractCountNonZero) { JoinLattice[Abs].join(content(adr),v) } else { v }
+    GCStoreAlt(content + (adr -> updatedValue), refs + (adr -> updatedAdrRefs))
+  }
+
+  /* TODO */
+
+  def join(that: Store[Addr,Abs]) = throw new Exception("NYI: GCStore.join(Store[Addr,Abs])")
+  def subsumes(that: Store[Addr,Abs]) = throw new Exception("NYI: GCStore.subsumes(Store[Addr,Abs])")
+  def diff(that: Store[Addr,Abs]) = throw new Exception("NYI: GCStore.diff(Store[Addr,Abs])")
+
+  /* PERFORMANCE OPTIMIZATION */
+
+  override def equals(that: Any): Boolean = that match {
+    case store: GCStoreAlt[Addr,Abs] => this.content == store.content
+    case _ => false
+  }
+
+  lazy val storedHashCode = content.hashCode
+  override def hashCode = storedHashCode
+}
+
 /** Store that combines a default read-only store with a writable store */
 case class CombinedStore[Addr : Address, Abs : JoinLattice](ro: Store[Addr, Abs], w: Store[Addr, Abs]) extends Store[Addr, Abs] {
   def keys = ro.keys.toSet ++ w.keys.toSet
@@ -451,6 +511,7 @@ object Store {
     new RefCountingStore[Addr,Abs](content)
   }
   def gcStore[Addr:Address,Abs:JoinLattice](values: Iterable[(Addr,Abs)]): GCStore[Addr,Abs] = new GCStore[Addr,Abs](values.toMap)
+  def gcStoreAlt[Addr:Address,Abs:JoinLattice](values: Iterable[(Addr,Abs)]): GCStoreAlt[Addr,Abs] = new GCStoreAlt[Addr,Abs](values.toMap)
 
   implicit def monoid[Addr : Address, Abs : JoinLattice]: Monoid[Store[Addr, Abs]] =
     new Monoid[Store[Addr, Abs]] {

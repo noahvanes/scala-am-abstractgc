@@ -101,6 +101,59 @@ case class GCKontStore[Addr : Address, KontAddr : KontAddress](content: Map[Kont
   override def hashCode = storedHashCode
 }
 
+class KontStoreJoinException extends Exception
+case class GCKontStoreAlt[Addr : Address, KontAddr : KontAddress](content: Map[KontAddr, Set[Kont[KontAddr]]] = Map[KontAddr, Set[Kont[KontAddr]]](),
+                                                                  refs: Map[KontAddr,Set[KontAddr]] = Map[KontAddr,Set[KontAddr]]().withDefaultValue(Set()),
+                                                                  vrefs: Map[KontAddr,Set[Addr]] = Map[KontAddr,Set[Addr]]().withDefaultValue(Set()),
+                                                                  marked: Boolean = false) extends KontStore[KontAddr] {
+
+  def mark(adr: KontAddr, marked: Set[KontAddr], addrs: Set[Addr]): (Set[KontAddr],Set[Addr]) =
+    refs(adr).foldLeft(marked+adr, addrs++vrefs(adr))((acc,ref) => {
+      if (acc._1.contains(ref)) { acc } else { mark(ref,acc._1,acc._2) }
+    })
+
+  def collect(root: KontAddr): (GCKontStoreAlt[Addr,KontAddr],Set[Addr]) = {
+    val (marked,addrs) = mark(root,Set(),Set())
+    val updatedContent = content.filterKeysStrict(marked)
+    val updatedRefs = refs.filterKeysStrict(marked).withDefaultValue(Set())
+    val updatedVRefs = vrefs.filterKeysStrict(marked).withDefaultValue(Set())
+    (GCKontStoreAlt(updatedContent, updatedRefs, updatedVRefs, false), addrs)
+  }
+
+  def keys = content.keys
+  def lookup(adr: KontAddr) = content(adr)
+  def forall(p: ((KontAddr, Set[Kont[KontAddr]])) => Boolean) = content.forall(p)
+
+  def extend(adr: KontAddr, kont: Kont[KontAddr]): GCKontStoreAlt[Addr,KontAddr] = {
+    val adrRefs = refs(adr)
+    val adrVRefs = vrefs(adr)
+    val adrCnts: Set[Kont[KontAddr]] = content.get(adr) match {
+      case None => Set.empty
+      case Some(_) if marked => throw new KontStoreJoinException()
+      case Some(cnts) => cnts
+    }
+    this.copy(content = content + (adr -> (adrCnts + kont)),
+              refs = refs + (adr -> (adrRefs + kont.next)),
+              vrefs = vrefs + (adr -> (adrVRefs ++ kont.frame.references)))
+    }
+
+  /* TODO */
+
+  def join(that: KontStore[KontAddr]) = throw new Exception("NYI: GCKontStoreAlt.join(KontStore[KontAddr])")
+  def subsumes(that: KontStore[KontAddr]) = throw new Exception("NYI: GCKontStoreAlt.subsumes(KontStore[KontAddr])")
+
+  /* PERFORMANCE OPTIMIZATION */
+
+  override def equals(that: Any): Boolean = that match {
+    case kstore : GCKontStoreAlt[Addr,KontAddr] => this.content == kstore.content
+    case _ => false
+  }
+
+  lazy val storedHashCode = content.hashCode
+  override def hashCode = storedHashCode
+}
+
+
 
 case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress]
   (root: KontAddr,
@@ -337,4 +390,6 @@ object KontStore {
     new RefCountingKontStore[Addr,KontAddr](root, content = Map(root->(Set(),Set(),Set())))
   def gcStore[Addr : Address, KontAddr : KontAddress]: GCKontStore[Addr,KontAddr] =
     new GCKontStore[Addr,KontAddr](Map(), Map().withDefaultValue(Set()), Map().withDefaultValue(Set()))
+  def gcStoreAlt[Addr : Address, KontAddr : KontAddress]: GCKontStoreAlt[Addr,KontAddr] =
+    new GCKontStoreAlt[Addr,KontAddr](Map(), Map().withDefaultValue(Set()), Map().withDefaultValue(Set()))
 }

@@ -16,9 +16,9 @@
  * be evaluated within this environment, whereas a continuation state only
  * contains the value reached.
  */
-class AAMGC2[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
+class AAMGCAlt[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
     extends EvalKontMachine[Exp, Abs, Addr, Time] {
-  def name = "AAMGC"
+  def name = "AAMGCAlt"
 
   /**
    * The store used for continuations is a KontStore (defined in
@@ -28,13 +28,8 @@ class AAMGC2[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timesta
   trait KontAddr
   case class NormalKontAddress(exp: Exp, time: Time) extends KontAddr {
     override def toString = s"$exp"
-    lazy val storedHashCode = (exp,time).hashCode
-    override def hashCode = storedHashCode
-  }
-  case class CallAddress(fexp: Exp, time: Time) extends KontAddr {
-    override def toString = s"$fexp"
-    lazy val storedHashCode = (fexp,time).hashCode
-    override def hashCode = storedHashCode
+    private lazy val storedHashCode = (exp,time).hashCode
+    override def hashCode: Int = storedHashCode
   }
   case object HaltKontAddress extends KontAddr {
     override def toString = "HALT"
@@ -50,10 +45,10 @@ class AAMGC2[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timesta
    * continuation store, and an address representing where the current
    * continuation lives.
    */
-  case class State(control: Control, store: GCStore[Addr, Abs], kstore: GCKontStore[Addr,KontAddr], a: KontAddr, t: Time) {
-    override def toString = control.toString
+  case class State(control: Control, store: GCStoreAlt[Addr, Abs], kstore: GCKontStoreAlt[Addr,KontAddr], a: KontAddr, t: Time) {
+    override def toString: String = control.toString
 
-    lazy val storedHashCode = (control, store, kstore, a, t).hashCode()
+    private lazy val storedHashCode = (control, store, kstore, a, t).hashCode()
     override def hashCode = storedHashCode
 
     override def equals(that: Any): Boolean = that match {
@@ -69,46 +64,48 @@ class AAMGC2[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timesta
      */
     def subsumes(that: State): Boolean = control.subsumes(that.control) && store.subsumes(that.store) && a == that.a && kstore.subsumes(that.kstore) && t == that.t
 
-    /**
-     * Integrates a set of actions (returned by the semantics, see
-     * Semantics.scala), in order to generate a set of states that succeeds this
-     * one.
-     */
-    private def integrate(adr: KontAddr, actions: Set[Action[Exp, Abs, Addr]], sem: Semantics[Exp, Abs, Addr, Time]): List[State] =
+    private def integrate(adr: KontAddr, actions: Set[Action[Exp, Abs, Addr]]): List[State] =
       actions.toList.map({
-        /* When a value is reached, we go to a continuation state */
-        case ActionReachedValue(v, store : GCStore[Addr, Abs], _) => State(ControlKont(v), store, kstore, adr, Timestamp[Time].tick(t)).collect(sem)
-        /* When a continuation needs to be pushed, push it in the continuation store */
-        case ActionPush(frame, e, env, store : GCStore[Addr, Abs], _) => {
+        case ActionReachedValue(v, store : GCStoreAlt[Addr, Abs], _) =>
+          State(ControlKont(v), store, kstore, adr, Timestamp[Time].tick(t))
+        case ActionPush(frame, e, env, store : GCStoreAlt[Addr, Abs], _) => {
           val next = NormalKontAddress(e, t)
-          State(ControlEval(e, env), store, kstore.extend(next, Kont(frame, adr)), next, Timestamp[Time].tick(t)).collect(sem)
+          State(ControlEval(e, env), store, kstore.extend(next, Kont(frame, adr)), next, Timestamp[Time].tick(t))
         }
-        /* When a value needs to be evaluated, we go to an eval state */
-        case ActionEval(e, env, store : GCStore[Addr, Abs], _) => State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t)).collect(sem)
-        /* When a function is stepped in, we also go to an eval state */
-        case ActionStepIn(fexp, _, e, env, store : GCStore[Addr, Abs], _, _) =>
-          State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t, fexp)).collect(sem)
-        /* When an error is reached, we go to an error state */
-        case ActionError(err) => State(ControlError(err), store, kstore, adr, Timestamp[Time].tick(t)).collect(sem)
+        case ActionEval(e, env, store : GCStoreAlt[Addr, Abs], _) =>
+          State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t))
+        case ActionStepIn(fexp, _, e, env, store : GCStoreAlt[Addr, Abs], _, _) =>
+          State(ControlEval(e, env), store, kstore, adr, Timestamp[Time].tick(t, fexp))
+        case ActionCall(fn, fexp, args, store: GCStoreAlt[Addr,Abs], _) =>
+          State(ControlCall(fn,fexp,args),store,kstore,adr,Timestamp[Time].tick(t))
+        case ActionError(err) =>
+          State(ControlError(err), store, kstore, adr, Timestamp[Time].tick(t))
       })
 
-    /**
-     * Computes the set of states that follow the current state
-     */
-    def step(sem: Semantics[Exp, Abs, Addr, Time]): List[State] = control match {
-      /* In a eval state, call the semantic's evaluation method */
-      case ControlEval(e, env) => integrate(a, sem.stepEval(e, env, store, t), sem)
-      /* In a continuation state, call the semantics' continuation method */
+    private def successors(sem: Semantics[Exp, Abs, Addr, Time]): List[State] = control match {
+      case ControlEval(e, env) => integrate(a, sem.stepEval(e, env, store, t))
+      case ControlCall(fn,fexp,args) => integrate(a, sem.stepCall(fn,fexp,args,store,t))
       case ControlKont(v) => kstore.lookup(a).toList.flatMap({
-        case Kont(frame, next) => integrate(next, sem.stepKont(v, frame, store, t), sem)
+        case Kont(frame, next) => integrate(next, sem.stepKont(v, frame, store, t))
       })
-      /* In an error state, the state is not able to make a step */
       case ControlError(_) => List()
     }
 
-    private def collect(sem: Semantics[Exp,Abs,Addr,Time]): State = {
+    def step(sem: Semantics[Exp, Abs, Addr, Time]): List[State] = {
+      val store1 = store.copy(marked = true)
+      val kstore1 = kstore.copy(marked = true)
+      val current = this.copy(store = store1, kstore = kstore1)
+      try {
+        current.successors(sem)
+      } catch {
+        case _ : KontStoreJoinException | _ : StoreJoinException =>
+          current.collect(sem).successors(sem)
+      }
+    }
+
+    def collect(sem: Semantics[Exp,Abs,Addr,Time]): State = {
       val (kstore1,addrs) = kstore.collect(a)
-      val store1 = store
+      val store1 = store.collect(control.references ++ sem.initialEnv.map(_._2) ++ addrs)
       this.copy(kstore = kstore1, store = store1)
     }
 
@@ -119,7 +116,7 @@ class AAMGC2[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timesta
      * reached the end of the computation, or an error
      */
     def halted: Boolean = control match {
-      case ControlEval(_, _) => false
+      case ControlEval(_, _) | ControlCall(_,_,_) => false
       case ControlKont(v) => a == HaltKontAddress
       case ControlError(_) => true
     }
@@ -127,7 +124,7 @@ class AAMGC2[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timesta
   object State {
     def inject(exp: Exp, env: Iterable[(String, Addr)], store: Iterable[(Addr, Abs)]) =
       State(ControlEval(exp, Environment.initial[Addr](env)),
-        Store.gcStore[Addr, Abs](store), KontStore.gcStore[Addr,KontAddr], HaltKontAddress, Timestamp[Time].initial(""))
+        Store.gcStoreAlt[Addr, Abs](store), KontStore.gcStoreAlt[Addr,KontAddr], HaltKontAddress, Timestamp[Time].initial(""))
     import scala.language.implicitConversions
 
     implicit val graphNode = new GraphNode[State, Unit] {
@@ -138,12 +135,6 @@ class AAMGC2[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timesta
         case _: ControlKont => Colors.Yellow
         case _: ControlError => Colors.Red
       }
-      import org.json4s._
-      import org.json4s.JsonDSL._
-      import org.json4s.jackson.JsonMethods._
-      import JSON._
-      override def content(s: State) =
-        ("control" -> s.control) ~ ("store" -> s.store) ~ ("kstore" -> s.kstore) ~ ("kont" -> s.a.toString) ~ ("time" -> s.t.toString)
     }
   }
 
@@ -175,21 +166,23 @@ class AAMGC2[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timesta
     * program (otherwise it will just visit every reachable state). A @param
     * timeout can also be given.
     */
-    def eval(exp: Exp, sem: Semantics[Exp, Abs, Addr, Time], graph: Boolean, timeout: Timeout): Output = {
-      val s0 = State.inject(exp, Iterable.empty, sem.initialStore)
-      val worklist = scala.collection.mutable.Queue[State](s0)
-      val visited = scala.collection.mutable.Set[State]()
-      var halted = Set[State]()
-      while (!(timeout.reached || worklist.isEmpty)) {
-        val s = worklist.dequeue
-        if (visited.add(s)) {
-          if (s.halted) {
-            halted = halted + s
-          } else {
-            worklist ++= s.step(sem)
-          }
-        }
-      }
-      AAMOutput(halted, visited.size, timeout.time, None, timeout.reached)
-    }
+   def eval(exp: Exp, sem: Semantics[Exp, Abs, Addr, Time], graph: Boolean, timeout: Timeout): Output = {
+     val s0 = State.inject(exp, Iterable.empty, sem.initialStore)
+     val worklist = scala.collection.mutable.Queue[State](s0)
+     val visited = scala.collection.mutable.Set[State]()
+     var halted = Set[State]()
+     while (!(timeout.reached || worklist.isEmpty)) {
+       val s = worklist.dequeue
+       if (visited.add(s)) {
+         if (s.halted) {
+           halted = halted + s
+         } else {
+           worklist ++= s.step(sem)
+         }
+       }
+     }
+     // UNCOMMENT LINE BELOW TO CHECK EXPLORED STATE SPACE AFTER REMOVING GARBAGE (=> should be equal that of AAMGC/AAMRefCounting)
+     // println(s"[size after GC: ${ (visited map { _.collect(sem) }).size }]")
+     AAMOutput(halted, visited.size, timeout.time, None, timeout.reached)
+   }
 }
