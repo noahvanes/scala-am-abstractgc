@@ -7,6 +7,7 @@ object Main {
   import java.io.{BufferedWriter, FileWriter}
   import scala.collection.JavaConversions._
   import au.com.bytecode.opencsv.CSVWriter
+  import java.io.File
 
   /* GLOBAL CONFIGURATION */
 
@@ -64,9 +65,11 @@ object Main {
 
   /* BENCHMARKING */
 
-  case class BenchmarkResult(name: String, machine: MachineConfiguration, result: MachineConfiguration#Output, timings: Iterable[Long])
+  case class BenchmarkResult(name: String, machine: MachineConfiguration, result: MachineConfiguration#Output, time: Long)
 
   case class Benchmark(name: String, location: String) {
+
+    assume({ val f = new File(location) ; f.exists() && f.isFile })
 
     override def toString = s"BENCMARK-$name"
 
@@ -79,32 +82,41 @@ object Main {
       val source = loadSource()
       val program = SchemeUtils.computeFreeVar(SchemeUtils.inline(machine.sem.parse(source), machine.sem.initialEnv.toMap))
       print(s">> RUNNING BENCHMARK $name [${machine.machine.name}]")
-      var result: machine.Output = null
-      val timings = (1 to runs) map { i =>
+      var lastResult: machine.Output = null
+      var bestTime = Long.MaxValue
+      var currentRun = 1
+      while (currentRun <= runs) {
         print(".")
         val t0 = System.nanoTime()
-        result = machine.run(program, timeout)
+        lastResult = machine.run(program, timeout)
         val t1 = System.nanoTime()
-        (t1 - t0) / 1000000
+        val elapsed = (t1 - t0) / 1000000
+        bestTime = Math.min(bestTime, elapsed)
+        currentRun = currentRun + 1
       }
       println()
-      println(s"(results: ${result.finalValues})")
-      BenchmarkResult(name, machine, result, timings)
+      BenchmarkResult(name, machine, lastResult, bestTime)
     }
   }
 
   def run(benchmarks: List[Benchmark], machines: List[MachineConfiguration], runs: Int = DEFAULT_RUNS, timeout: Int = DEFAULT_TIMEOUT): List[BenchmarkResult]
     = benchmarks.flatMap(benchmark => machines.map(machine => benchmark.run(machine, runs, timeout)))
 
-  def compareOn(benchmarks: List[Benchmark], lattice: SchemeLattice, context: TimestampWrapper, runs: Int = DEFAULT_RUNS, timeout: Int = DEFAULT_TIMEOUT, excludeOriginal: Boolean = true): List[BenchmarkResult] = {
+  def compareOn(benchmarks: List[Benchmark],
+                lattice: SchemeLattice = typeLattice,
+                context: TimestampWrapper = zeroCFA,
+                runs: Int = DEFAULT_RUNS,
+                timeout: Int = DEFAULT_TIMEOUT,
+                includeOriginal: Boolean = false,
+                includeTracingGC: Boolean = true,
+                includeRefCounting: Boolean = true): List[BenchmarkResult] = {
     val machineWithoutGC = new MachineConfiguration(lattice, context) with DefaultAAM
     val machineWithTracingGC = new MachineConfiguration(lattice, context) with TracingGC
     val machineWithRefCounts = new MachineConfiguration(lattice, context) with RefCounting
-    val machines = if (excludeOriginal) {
-      List(machineWithTracingGC,machineWithRefCounts)
-    } else {
-      List(machineWithoutGC,machineWithTracingGC,machineWithRefCounts)
-    }
+    var machines = List[MachineConfiguration]()
+    if (includeOriginal) { machines ++= List(machineWithoutGC)  }
+    if (includeTracingGC) { machines ++= List(machineWithTracingGC) }
+    if (includeRefCounting) { machines ++= List(machineWithRefCounts) }
     run(benchmarks,machines,runs,timeout)
   }
 
@@ -112,12 +124,12 @@ object Main {
     val outputPath = s"$OUTPUT_DIR/$filename.csv"
     val outputFile = new BufferedWriter(new FileWriter(outputPath))
     val csvWriter = new CSVWriter(outputFile)
-    var csvContents = List(Array("name", "timeout", "numberOfStates", "timeElapsed"))
+    var csvContents = List(Array("name", "timeout", "number of states", "time elapsed"))
     results foreach { case b =>
       val machine = s"${b.name}-${b.machine.machine.name}"
       val timeout = if (b.result.timedOut) { "1" } else { "0" }
       val count = b.result.numberOfStates.toString
-      val time = b.timings.min.toString
+      val time = b.time.toString
       csvContents = Array(machine, timeout, count, time) :: csvContents
     }
     csvWriter.writeAll(csvContents.reverse)
@@ -126,15 +138,30 @@ object Main {
 
   /* BENCHMARK SUITES */
 
-  private def loadBenchmark(name: String, subfolder: String) = Benchmark(name, s"$BENCHMARK_DIR/$subfolder/$name.scm")
+  private def loadBenchmark(subfolder: String)(name: String) = Benchmark(name, s"$BENCHMARK_DIR/$subfolder/$name.scm")
 
-  private val gabrielBenchmarks = List("cpstak") map { loadBenchmark(_,"gabriel") }
-  private val simpleBenchmarks = List("primtest") map { loadBenchmark(_,"simple") }
+  // Gabriel benchmarks
+  private val loadGabrielBenchmark: String => Benchmark = loadBenchmark("gabriel")
+  private val boyer   = loadGabrielBenchmark("boyer")
+  private val browse  = loadGabrielBenchmark("browse")
+  private val cpstak  = loadGabrielBenchmark("cpstak")
+  private val dderiv  = loadGabrielBenchmark("dderiv")
+  private val deriv   = loadGabrielBenchmark("deriv")
+  private val destruc = loadGabrielBenchmark("destruc")
+  private val diviter = loadGabrielBenchmark("diviter")
+  private val divrec  = loadGabrielBenchmark("divrec")
+  private val puzzle  = loadGabrielBenchmark("puzzle")
+  private val takl    = loadGabrielBenchmark("takl")
+  private val triangl = loadGabrielBenchmark("triangl")
+  private val gabrielBenchmarks = List(boyer, browse, cpstak, dderiv, deriv, destruc, diviter, divrec, puzzle, takl, triangl)
+
+  // Other benchmarks
+  private val simpleLoop = loadBenchmark("simple")("simple-loop")
 
   /* MAIN ENTRY POINT */
 
   def main(args: Array[String]): Unit = {
-    val results = compareOn(simpleBenchmarks, typeLattice, zeroCFA, runs=100, timeout=1)
-    exportCSV(results, filename = "simple-type-0CFA")
+    val results = compareOn(List(simpleLoop), lattice=constantPropLattice, runs=1, timeout=1)
+    //exportCSV(results, filename = "tmp")
   }
 }

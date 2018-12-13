@@ -101,7 +101,7 @@ class MakeSchemeLattice[
     }
 
     def references[Addr : Address](x: Value): Set[Addr] = x match {
-      case Bot | Str(_) | Bool(_) | Int(_) | Real(_) | Char(_) | Symbol(_) | Prim(_) | Nil => Set()
+      case Bot | Str(_) | Bool(_) | Int(_) | Real(_) | Char(_) | Symbol(_) | Prim(_) | Nil => Set.empty
       case Closure(exp, env : Environment[Addr] @unchecked) => env.addrs.toSet
       case Cons(car : Addr @unchecked, cdr : Addr @unchecked) => Set(car,cdr)
       case VectorAddress(adr : Addr @unchecked) => Set(adr)
@@ -346,6 +346,10 @@ class MakeSchemeLattice[
         case StringLt => (x, y) match {
           case (Str(s1), Str(s2)) => Bool(StringLattice[S].lt(s1, s2))
           case  _ => OperatorNotApplicable("string<?", List(x.toString, y.toString))
+        }
+        case StringRef => (x, y) match {
+          case (Str(s), Int(idx)) => Char(StringLattice[S].charAt(s,idx))
+          case _ => OperatorNotApplicable("string-ref", List(x.toString, y.toString))
         }
       }
     }

@@ -48,6 +48,7 @@ class SchemePrimitives[Addr : Address, Abs : IsSchemeLattice] extends Primitives
   def eqq = abs.binaryOp(BinaryOperator.Eq) _
   def stringAppend = abs.binaryOp(BinaryOperator.StringAppend) _
   def stringLt = abs.binaryOp(BinaryOperator.StringLt) _
+  def stringRef = abs.binaryOp(BinaryOperator.StringRef) _
 
   abstract class NoStoreOperation(val name: String, val nargs: Option[Int] = None) extends Primitive[Addr, Abs] {
     def call(args: List[Abs]): MayFail[Abs] = MayFailError(List(ArityError(name, nargs.getOrElse(-1), args.length)))
@@ -380,6 +381,9 @@ class SchemePrimitives[Addr : Address, Abs : IsSchemeLattice] extends Primitives
   }
   object StringLength extends NoStoreOperation("string-length", Some(1)) {
     override def call(x: Abs) = stringLength(x)
+  }
+  object StringRef extends NoStoreOperation("string-ref", Some(2)) {
+    override def call(x: Abs, y: Abs) = stringRef(x,y)
   }
   object Newline extends NoStoreOperation("newline", Some(0)) {
     override def call() = { println(""); MayFailSuccess(abs.inject(false)) }
@@ -1076,7 +1080,7 @@ class SchemePrimitives[Addr : Address, Abs : IsSchemeLattice] extends Primitives
                     /* [x]  string-copy: String Selection */
                     /* [x]  string-fill!: String Modification */
     StringLength,   /* [vv] string-length: String Selection */
-                    /* [x]  string-ref: String Selection */
+    StringRef,      /* [vx] string-ref: String Selection */
                     /* [x]  string-set!: String Modification */
                     /* [x]  string<=?: String Comparison */
     StringLt,       /* [vv]  string<?: String Comparison */

@@ -99,6 +99,7 @@ trait StringLattice[S] extends LatticeElement[S] {
   def append(s1: S, s2: S): S
   def lt[B : BoolLattice](s1: S, s2: S): B
   def toSymbol[Sym : SymbolLattice](s: S): Sym
+  def charAt[I : IntLattice, C : CharLattice](s: S, i: I) = CharLattice[C].top
 
   trait StringLatticeLaw {
     lazy val intLat = new BoundedInteger(100)
