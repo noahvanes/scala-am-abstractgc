@@ -31,11 +31,6 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
     lazy val storedHashCode = (exp,time).hashCode
     override def hashCode = storedHashCode
   }
-  case class CallAddress(fexp: Exp, time: Time) extends KontAddr {
-    override def toString = s"$fexp"
-    lazy val storedHashCode = (fexp,time).hashCode
-    override def hashCode = storedHashCode
-  }
   case object HaltKontAddress extends KontAddr {
     override def toString = "HALT"
     override def hashCode = 0

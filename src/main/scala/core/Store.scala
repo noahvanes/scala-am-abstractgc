@@ -183,7 +183,7 @@ extends Store[Addr,Abs] {
         val updatedVal = JoinLattice[Abs].join(u, v)
         val updatedHc = this.hc - u.hashCode() + updatedVal.hashCode()
         val ((updatedDs, updatedIn), updatedRefs) = vrefs.foldLeft(((this.ds, this.in), urefs))((acc, ref) => {
-          if (urefs.contains(ref)) { acc  } else { (detectCycle(adr, ref, acc._1), acc._2 + ref) }
+          if (urefs.contains(ref)) { acc } else { (detectCycle(adr, ref, acc._1), acc._2 + ref) }
         })
         val updatedContent = this.content + (adr -> (updatedVal, updatedRefs))
         RefCountingStore(updatedContent, updatedIn, updatedDs, updatedHc)

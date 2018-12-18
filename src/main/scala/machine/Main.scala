@@ -29,11 +29,11 @@ object Main {
     val primitives = new SchemePrimitives[ClassicalAddress.A, lattice.L]
     val sem = new SchemeSemantics[lattice.L, ClassicalAddress.A, timestamp.T](primitives)
 
-    def run(program: SchemeExp, timeout: Int): Output = machine.eval(program,sem,false,Timeout.start(Duration(timeout,"minutes")))
+    def run(program: SchemeExp, timeout: Int): Output = machine.eval(program,sem,false,Timeout.start(Duration(timeout,"seconds")))
   }
 
   trait DefaultAAM extends MachineConfiguration {
-    val machine = new AAM[SchemeExp,lattice.L,ClassicalAddress.A,timestamp.T]
+    val machine = new AAMOriginal[SchemeExp,lattice.L,ClassicalAddress.A,timestamp.T]
   }
   trait TracingGC extends MachineConfiguration {
     val machine = new AAMGC[SchemeExp,lattice.L,ClassicalAddress.A,timestamp.T]
@@ -120,10 +120,10 @@ object Main {
     val machineWithTracingGCAlt = new MachineConfiguration(lattice, context) with TracingGCAlt
     val machineWithRefCounts = new MachineConfiguration(lattice, context) with RefCounting
     var machines = List[MachineConfiguration]()
-    if (includeOriginal) { machines ++= List(machineWithoutGC)  }
-    if (includeTracingGC) { machines ++= List(machineWithTracingGC) }
+    if (includeOriginal)     { machines ++= List(machineWithoutGC)  }
+    if (includeTracingGC)    { machines ++= List(machineWithTracingGC) }
     if (includeTracingGCAlt) { machines ++= List(machineWithTracingGCAlt) }
-    if (includeRefCounting) { machines ++= List(machineWithRefCounts) }
+    if (includeRefCounting)  { machines ++= List(machineWithRefCounts) }
     run(benchmarks,machines,runs,timeout)
   }
 
@@ -131,7 +131,7 @@ object Main {
     val outputPath = s"$OUTPUT_DIR/$filename.csv"
     val outputFile = new BufferedWriter(new FileWriter(outputPath))
     val csvWriter = new CSVWriter(outputFile)
-    var csvContents = List(Array("name", "timeout", "number of states", "time elapsed"))
+    var csvContents = List(Array("benchmark", "timeout", "number of states", "time elapsed"))
     results foreach { b =>
       val machine = s"${b.name}-${b.machine.machine.name}"
       val timeout = if (b.result.timedOut) { "1" } else { "0" }
@@ -146,7 +146,7 @@ object Main {
   /* BENCHMARK SUITES */
 
   private def loadBenchmark(name: String, subfolder: String) = Benchmark(name, s"$BENCHMARK_DIR/$subfolder/$name.scm")
-  implicit def singleBenchmark(b: Benchmark): List[Benchmark] = List(b)
+  implicit def benchmarkToList(b: Benchmark): List[Benchmark] = List(b)
 
   // Gabriel benchmarks
   private def loadGabrielBenchmark(name: String) = loadBenchmark(name, "gabriel")
@@ -167,11 +167,12 @@ object Main {
   private val simpleLoop = loadBenchmark("loop", "varia")
   private val primtest = loadBenchmark("primtest", "varia")
   private val collatz = loadBenchmark("collatz", "varia")
+  private val gcipd = loadBenchmark("gcipd", "varia")
 
   /* MAIN ENTRY POINT */
 
   def main(args: Array[String]): Unit = {
-    val results = compareOn(gabrielBenchmarks, runs=1, includeTracingGC=false, timeout=1)
+    val results = compareOn(primtest, includeOriginal=true, runs=30, timeout=60)
     //exportCSV(results, filename = "tmp")
   }
 }
