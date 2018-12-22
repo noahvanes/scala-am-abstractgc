@@ -105,7 +105,7 @@ object GraphDOTOutput extends GraphOutput {
       val label = GraphNode[N, C].labelXml(n, ctx).mkString(" ")
       val color = GraphNode[N, C].color(n, ctx)
       val tooltip = GraphNode[N, C].tooltip(n, ctx)
-      writer.append(s"node_$id[shape=box, xlabel=$id, label=<$label>, fillcolor=<$color> style=<filled>, tooltip=<$tooltip>];\n")
+      writer.append(s"node_$id[shape=circle, label=<$label>, fillcolor=<$color> style=<filled>, tooltip=<$tooltip>];\n")
     })
     graph.edges.foreach({ case (n1, ns) => ns.foreach({ case (annot, n2) =>
       val annotstr = GraphAnnotation[A, C].labelXml(annot, ctx).mkString(" ")

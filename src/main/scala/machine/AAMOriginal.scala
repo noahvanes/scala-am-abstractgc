@@ -87,13 +87,8 @@ class AAMOriginal[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Ti
     import scala.language.implicitConversions
 
     implicit val graphNode = new GraphNode[State, Unit] {
-      override def label(s: State) = s.toString
-      override def color(s: State) = s.control match {
-        case _: ControlEval => Colors.White
-        case _: ControlKont if s.halted => Colors.Green
-        case _: ControlKont => Colors.Yellow
-        case _: ControlError => Colors.Red
-      }
+      override def label(s: State) = " "
+      override def color(s: State) = Colors.White
     }
   }
 
@@ -111,21 +106,26 @@ class AAMOriginal[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Ti
     }
   }
 
-   def eval(exp: Exp, sem: Semantics[Exp, Abs, Addr, Time], graph: Boolean, timeout: Timeout): Output = {
-     val s0 = State.inject(exp, Iterable.empty, sem.initialStore)
-     val worklist = scala.collection.mutable.Queue[State](s0)
-     val visited = scala.collection.mutable.Set[State]()
-     var halted = Set[State]()
-     while (!(timeout.reached || worklist.isEmpty)) {
-       val s = worklist.dequeue
-       if (visited.add(s)) {
-         if (s.halted) {
-           halted = halted + s
-         } else {
-           worklist ++= s.step(sem)
-         }
-       }
-     }
-     AAMOutput(halted, visited.size, timeout.time, None, timeout.reached)
-   }
+  def eval(exp: Exp, sem: Semantics[Exp, Abs, Addr, Time], graph: Boolean, timeout: Timeout): Output = {
+    val s0 = State.inject(exp, Iterable.empty, sem.initialStore)
+    val worklist = scala.collection.mutable.Queue[State](s0)
+    val visited = scala.collection.mutable.Set[State]()
+    var halted = Set[State]()
+    var currentGraph = Graph.empty[State,Unit,Unit]
+    while (!(timeout.reached || worklist.isEmpty)) {
+      val s = worklist.dequeue
+      if (visited.add(s)) {
+        if (s.halted) {
+          halted = halted + s
+        } else {
+          val succs = s.step(sem)
+          worklist ++= succs
+          if (graph) {
+            currentGraph = currentGraph.addEdges(succs.map((s,(),_)))
+          }
+        }
+      }
+    }
+    AAMOutput(halted, visited.size, timeout.time, if (graph) { Some(currentGraph) } else { None }, timeout.reached)
+  }
 }

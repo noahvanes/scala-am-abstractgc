@@ -29,7 +29,7 @@ object Main {
     val primitives = new SchemePrimitives[ClassicalAddress.A, lattice.L]
     val sem = new SchemeSemantics[lattice.L, ClassicalAddress.A, timestamp.T](primitives)
 
-    def run(program: SchemeExp, timeout: Int): Output = machine.eval(program,sem,false,Timeout.start(Duration(timeout,"seconds")))
+    def run(program: SchemeExp, timeout: Int, graph: Boolean): Output = machine.eval(program,sem,graph,Timeout.start(Duration(timeout,"seconds")))
   }
 
   trait DefaultAAM extends MachineConfiguration {
@@ -81,7 +81,7 @@ object Main {
       try data.mkString finally data.close()
     }
 
-    def run(machine: MachineConfiguration, runs: Int, timeout: Int): BenchmarkResult = {
+    def run(machine: MachineConfiguration, runs: Int, timeout: Int, graph: Boolean): BenchmarkResult = {
       val source = loadSource()
       val program = SchemeUtils.computeFreeVar(SchemeUtils.inline(machine.sem.parse(source), machine.sem.initialEnv.toMap))
       print(s">> RUNNING BENCHMARK $name [${machine.machine.name}]")
@@ -91,7 +91,7 @@ object Main {
       while (currentRun <= runs) {
         print(".")
         val t0 = System.nanoTime()
-        lastResult = machine.run(program, timeout)
+        lastResult = machine.run(program, timeout, graph)
         val t1 = System.nanoTime()
         val elapsed = (t1 - t0) / 1000000
         bestTime = Math.min(bestTime, elapsed)
@@ -103,14 +103,15 @@ object Main {
     }
   }
 
-  def run(benchmarks: List[Benchmark], machines: List[MachineConfiguration], runs: Int = DEFAULT_RUNS, timeout: Int = DEFAULT_TIMEOUT): List[BenchmarkResult]
-    = benchmarks.flatMap(benchmark => machines.map(machine => benchmark.run(machine, runs, timeout)))
+  def run(benchmarks: List[Benchmark], machines: List[MachineConfiguration], runs: Int = DEFAULT_RUNS, timeout: Int = DEFAULT_TIMEOUT, graph: Boolean = false): List[BenchmarkResult]
+    = benchmarks.flatMap(benchmark => machines.map(machine => benchmark.run(machine, runs, timeout, graph)))
 
   def compareOn(benchmarks: List[Benchmark],
                 lattice: SchemeLattice = typeLattice,
                 context: TimestampWrapper = zeroCFA,
                 runs: Int = DEFAULT_RUNS,
                 timeout: Int = DEFAULT_TIMEOUT,
+                graph: Boolean = false,
                 includeOriginal: Boolean = false,
                 includeTracingGC: Boolean = true,
                 includeTracingGCAlt: Boolean = true,
@@ -124,7 +125,7 @@ object Main {
     if (includeTracingGC)    { machines ++= List(machineWithTracingGC) }
     if (includeTracingGCAlt) { machines ++= List(machineWithTracingGCAlt) }
     if (includeRefCounting)  { machines ++= List(machineWithRefCounts) }
-    run(benchmarks,machines,runs,timeout)
+    run(benchmarks,machines,runs,timeout,graph=graph)
   }
 
   def exportCSV(results: List[BenchmarkResult], filename: String): Unit = {
@@ -133,14 +134,18 @@ object Main {
     val csvWriter = new CSVWriter(outputFile)
     var csvContents = List(Array("benchmark", "timeout", "number of states", "time elapsed"))
     results foreach { b =>
-      val machine = s"${b.name}-${b.machine.machine.name}"
+      val name = s"${b.name}-${b.machine.machine.name}"
       val timeout = if (b.result.timedOut) { "1" } else { "0" }
       val count = b.result.numberOfStates.toString
       val time = b.time.toString
-      csvContents = Array(machine, timeout, count, time) :: csvContents
+      csvContents = Array(name, timeout, count, time) :: csvContents
     }
     csvWriter.writeAll(csvContents.reverse)
     csvWriter.close()
+  }
+
+  def exportGraphs(results: List[BenchmarkResult]): Unit = results foreach { br =>
+    br.result.toPng(s"$OUTPUT_DIR/${br.name}-${br.machine.machine.name}.png")
   }
 
   /* BENCHMARK SUITES */
@@ -169,10 +174,15 @@ object Main {
   private val collatz = loadBenchmark("collatz", "varia")
   private val gcipd = loadBenchmark("gcipd", "varia")
 
+  // From Scala-AM tests
+  private def loadTest(name: String) = Benchmark(name, s"test/$name.scm")
+
   /* MAIN ENTRY POINT */
 
   def main(args: Array[String]): Unit = {
-    val results = compareOn(primtest, includeOriginal=true, runs=30, timeout=60)
+    //val results = compareOn(loadTest("collatz"), includeOriginal=true, runs=1, timeout=60)
     //exportCSV(results, filename = "tmp")
+    val results = compareOn(collatz, runs=1, graph=true, includeOriginal=true)
+    exportGraphs(results)
   }
 }

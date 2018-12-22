@@ -101,7 +101,7 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
       case ControlError(_) => List()
     }
 
-    private def collect(sem: Semantics[Exp,Abs,Addr,Time]): State = {
+    def collect(sem: Semantics[Exp,Abs,Addr,Time]): State = {
       val (kstore1,addrs) = kstore.collect(a)
       val store1 = store.collect(control.references ++ sem.initialEnv.map(_._2) ++ addrs)
       this.copy(kstore = kstore1, store = store1)
@@ -126,20 +126,8 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
     import scala.language.implicitConversions
 
     implicit val graphNode = new GraphNode[State, Unit] {
-      override def label(s: State) = s.toString
-      override def color(s: State) = s.control match {
-        case _: ControlEval => Colors.White
-        case _: ControlKont if s.halted => Colors.Green
-        case _: ControlKont => Colors.Yellow
-        case _: ControlError => Colors.Red
-      }
-
-      import org.json4s._
-      import org.json4s.JsonDSL._
-      import org.json4s.jackson.JsonMethods._
-      import JSON._
-      override def content(s: State) =
-        ("control" -> s.control) ~ ("store" -> s.store) ~ ("kstore" -> s.kstore) ~ ("kont" -> s.a.toString) ~ ("time" -> s.t.toString)
+      override def label(s: State) = " "
+      override def color(s: State) = Colors.White
     }
   }
 
@@ -176,16 +164,21 @@ class AAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestam
      val worklist = scala.collection.mutable.Queue[State](s0)
      val visited = scala.collection.mutable.Set[State]()
      var halted = Set[State]()
+     var currentGraph = Graph.empty[State,Unit,Unit]
      while (!(timeout.reached || worklist.isEmpty)) {
        val s = worklist.dequeue
        if (visited.add(s)) {
          if (s.halted) {
            halted = halted + s
          } else {
-           worklist ++= s.step(sem)
+           val succs = s.step(sem)
+           worklist ++= succs
+           if (graph) {
+             currentGraph = currentGraph.addEdges(succs.map((s,(),_)))
+           }
          }
        }
      }
-     AAMOutput(halted, visited.size, timeout.time, None, timeout.reached)
+     AAMOutput(halted, visited.size, timeout.time, if (graph) { Some(currentGraph) } else { None }, timeout.reached)
    }
 }
