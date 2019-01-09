@@ -1,4 +1,4 @@
-;;; ARRAY1 -- One of the Kernighan and Van Wyk benchmarks.
+;;; ARRAY -- One of the Kernighan and Van Wyk benchmarks.
 ;; reduced number of iterations from 200000 to 200
 
 (define (create-x n)
@@ -24,10 +24,10 @@
   (vector-length (create-y (create-x n))))
 
 (define (go n)
-  (let loop ((repeat 100)
+  (let loop ((repeat 1)
              (result '()))
     (if (> repeat 0)
         (loop (- repeat 1) (my-try n))
         result)))
 
-(= 200 (go 200))
+(go 100)

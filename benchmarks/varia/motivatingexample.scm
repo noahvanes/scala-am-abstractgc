@@ -1,0 +1,5 @@
+(let ((double (lambda (x) (+ x x)))
+      (square (lambda (x) (* x x)))
+      (apply-fn (lambda (f n) (f n))))
+  (apply-fn double 3)
+  (apply-fn square 4))

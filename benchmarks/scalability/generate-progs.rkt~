@@ -1,0 +1,19 @@
+#lang racket
+
+(define (generate-prog todo vars defs)
+  (if (= todo 0)
+      `(begin ,@defs (+ ,@vars))
+      (let [(v (gensym))]
+        (generate-prog (- todo 1)
+                       (cons v vars)
+                       (cons `(define ,v ,(random 100)) defs)))))
+
+(define START 10)
+(define STOP 1000000)
+(define UPDATE (lambda (x) (* x 10)))
+
+(let loop [(current START)]
+  (when (<= current STOP)
+    (with-output-to-file (string-append "/Users/nvanes/Desktop/benchmarks/scalability/" (number->string current) ".scm")
+      (lambda () (write (generate-prog 10 '() '()))))
+    (loop (UPDATE current))))

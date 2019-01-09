@@ -343,6 +343,96 @@ case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress]
   def reachable(from: KontAddr, to: KontAddr): Boolean = transclo(from).contains(to)
 }
 
+case class RefCountingKontStoreVanilla[Addr : Address, KontAddr : KontAddress]
+(root: KontAddr,
+ content: Map[KontAddr, (Set[Kont[KontAddr]],Set[KontAddr],Set[Addr])] = Map[KontAddr, (Set[Kont[KontAddr]],Set[KontAddr],Set[Addr])](),
+ in: Map[KontAddr,Set[KontAddr]] = Map[KontAddr,Set[KontAddr]]().withDefaultValue(Set[KontAddr]()),
+ hc: Int = 0)
+  extends KontStore[KontAddr] {
+
+  type AddrCount = Map[KontAddr,Set[KontAddr]]
+  type AddrQueue = scala.collection.mutable.Queue[KontAddr]
+
+  private def deallocRef(from: KontAddr, to: KontAddr, newRoot: KontAddr, currentIn: AddrCount, toDealloc: AddrQueue): AddrCount = {
+    val current = currentIn(to)
+    val updated = current - from
+    if (updated.isEmpty && to != newRoot) {
+      toDealloc.enqueue(to)
+      currentIn
+    } else {
+      currentIn + (to -> updated)
+    }
+  }
+
+  private def dealloc(addr: KontAddr, currentIn: AddrCount, newRoot: KontAddr, toDealloc: AddrQueue, toDelete: AddrQueue): AddrCount = {
+    toDelete.enqueue(addr)
+    val succs = content(addr)._2
+    succs.foldLeft(currentIn)((acc,ref) => deallocRef(addr,ref,newRoot,acc,toDealloc))
+  }
+
+  def pop(newRoot: KontAddr): (RefCountingKontStoreVanilla[Addr,KontAddr],Iterable[Addr]) = {
+    val toDelete = scala.collection.mutable.Queue[KontAddr]()
+    val toDealloc = scala.collection.mutable.Queue[KontAddr]()
+    if (in(root).isEmpty && root != newRoot) {
+      toDealloc.enqueue(root)
+    }
+    var updatedIn = in
+    while (toDealloc.nonEmpty) { updatedIn = dealloc(toDealloc.dequeue, updatedIn, newRoot, toDealloc, toDelete) }
+    val updatedHc = toDelete.foldLeft(this.hc)((acc,ref) => content(ref)._1.foldLeft(acc)((acc2,kont) => acc2 - kont.hashCode()))
+    val deletedAddr = toDelete.foldLeft(Set[Addr]())((acc,ref) => acc ++ content(ref)._3)
+    (RefCountingKontStoreVanilla(newRoot, content -- toDelete, updatedIn -- toDelete, updatedHc), deletedAddr)
+  }
+
+  def keys = content.keys
+  def lookup(adr: KontAddr) = content(adr)._1
+  def forall(p: ((KontAddr, Set[Kont[KontAddr]])) => Boolean) = content.forall(n => p(n._1,n._2._1))
+
+  def extend(adr: KontAddr, kont: Kont[KontAddr]) = ???
+
+  def push(adr: KontAddr, frm: Frame): (RefCountingKontStoreVanilla[Addr,KontAddr],Iterable[Addr]) = {
+    val kont = Kont(frm, this.root)
+    content.get(adr) match {
+      case None =>
+        val kontRefs = kont.frame.references
+        val updatedContent = content + (adr -> (Set(kont), Set(kont.next), kontRefs))
+        val updatedIn = in + (kont.next -> (in(kont.next) + adr))
+        val updatedHC = hc + kont.hashCode()
+        val updatedKstore = this.copy(root = adr, content = updatedContent, in = updatedIn, hc = updatedHC)
+        (updatedKstore, kontRefs)
+      case Some((konts, _, _)) if konts.contains(kont) =>
+        (this.copy(root = adr), Iterable.empty)
+      case Some((konts, kaddrs, addrs)) =>
+        val updatedHC = hc + kont.hashCode()
+        val (updatedIn, updatedKaddrs) = if (kaddrs.contains(kont.next)) {
+          (in, kaddrs)
+        } else {
+          val updatedIn = in + (kont.next -> (in(kont.next) + adr))
+          val updatedKaddrs = kaddrs + kont.next
+          (updatedIn, updatedKaddrs)
+        }
+        val (addedAddrs, updatedAddrs) = kont.frame.references.foldLeft((List[Addr](), addrs))((acc, ref) => if (addrs.contains(ref)) { acc } else { (ref :: acc._1, acc._2 + ref) })
+        val updatedContent = content + (adr -> (konts + kont, updatedKaddrs, updatedAddrs))
+        val updatedKontStore = this.copy(root = adr, content = updatedContent, in = updatedIn, hc = updatedHC)
+        (updatedKontStore, addedAddrs)
+    }
+  }
+
+  /* TODO */
+
+  def join(that: KontStore[KontAddr]) = throw new Exception("NYI: RefCountingKontStore.join(KontStore[KontAddr])")
+  def subsumes(that: KontStore[KontAddr]) = throw new Exception("NYI: RefCountingKontStore.subsumes(KontStore[KontAddr])")
+
+  /* PERFORMANCE OPTIMIZATION */
+
+  override def equals(that: Any): Boolean = that match {
+    case kstore : RefCountingKontStoreVanilla[Addr,KontAddr] => this.hc == kstore.hc && this.content == kstore.content
+    case _ => false
+  }
+
+  override def hashCode = hc
+}
+
+
 case class TimestampedKontStore[KontAddr : KontAddress](content: Map[KontAddr, Set[Kont[KontAddr]]], timestamp: Int) extends KontStore[KontAddr] {
   def keys = content.keys
   def lookup(a: KontAddr) = content.getOrElse(a,Set())
@@ -388,6 +478,8 @@ object KontStore {
     new BasicKontStore[KontAddr](Map())
   def refCountStore[Addr : Address, KontAddr : KontAddress](root: KontAddr): RefCountingKontStore[Addr,KontAddr] =
     new RefCountingKontStore[Addr,KontAddr](root, content = Map(root->(Set(),Set(),Set())))
+  def refCountStoreVanilla[Addr : Address, KontAddr : KontAddress](root: KontAddr): RefCountingKontStoreVanilla[Addr,KontAddr] =
+    new RefCountingKontStoreVanilla[Addr,KontAddr](root, content = Map(root->(Set(),Set(),Set())))
   def gcStore[Addr : Address, KontAddr : KontAddress]: GCKontStore[Addr,KontAddr] =
     new GCKontStore[Addr,KontAddr](Map(), Map().withDefaultValue(Set()), Map().withDefaultValue(Set()))
   def gcStoreAlt[Addr : Address, KontAddr : KontAddress]: GCKontStoreAlt[Addr,KontAddr] =

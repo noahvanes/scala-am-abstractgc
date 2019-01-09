@@ -390,8 +390,8 @@ class SchemePrimitives[Addr : Address, Abs : IsSchemeLattice] extends Primitives
   }
   object Display extends NoStoreOperation("display", Some(1)) {
     override def call(x: Abs) = {
-      val str = x.toString
-      print(if (str.startsWith("\"")) { str.substring(1, str.size-1) } else { str })
+      //val str = x.toString
+      //print(if (str.startsWith("\"")) { str.substring(1, str.size-1) } else { str })
       MayFailSuccess(x) /* Undefined behavior in R5RS */
     }
   }
