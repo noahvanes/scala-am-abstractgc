@@ -14,10 +14,6 @@ object Main {
   val BENCHMARK_DIR = "benchmarks"
   val OUTPUT_DIR = "output"
 
-  val DEFAULT_RUNS = 10     // used for JIT warmup runs and better (lower) variance
-  val DEFAULT_TIMEOUT = 10  // timeout expressed in minutes
-  val WARMUP_RUNS = 10
-
   /* MACHINE CONFIGURATIONS */
 
   abstract case class MachineConfiguration(lattice: SchemeLattice, timestamp: TimestampWrapper) {
@@ -53,21 +49,17 @@ object Main {
   }
 
   // some lattices
-  val concreteLattice = new MakeSchemeLattice[Concrete.S, Concrete.B, Concrete.I, Concrete.F, Concrete.C, Concrete.Sym](false)
-  val typeLattice = new MakeSchemeLattice[Type.S, Concrete.B, Type.I, Type.F, Type.C, Type.Sym](false)
-  val constantPropLattice = new MakeSchemeLattice[ConstantPropagation.S, Concrete.B, ConstantPropagation.I, ConstantPropagation.F, ConstantPropagation.C, ConstantPropagation.Sym](false)
-  def boundedIntLattice(bound: Int) = {
+  private val concreteLattice = new MakeSchemeLattice[Concrete.S, Concrete.B, Concrete.I, Concrete.F, Concrete.C, Concrete.Sym](false)
+  private val typeLattice = new MakeSchemeLattice[Type.S, Concrete.B, Type.I, Type.F, Type.C, Type.Sym](false)
+  private val constantPropLattice = new MakeSchemeLattice[ConstantPropagation.S, Concrete.B, ConstantPropagation.I, ConstantPropagation.F, ConstantPropagation.C, ConstantPropagation.Sym](false)
+  private def boundedIntLattice(bound: Int) = {
     val bounded = new BoundedInteger(bound)
     new MakeSchemeLattice[Type.S, Concrete.B, bounded.I, Type.F, Type.C, Type.Sym](false)
   }
-  def kPointsToLattice(k: Int) = {
+  private def kPointsToLattice(k: Int) = {
     val kpts = new KPointsTo(k)
     new MakeSchemeLattice[kpts.S, Concrete.B, kpts.I, kpts.F, kpts.C, kpts.S](false)
   }
-
-  // some timestamps
-  val zeroCFA: TimestampWrapper = ZeroCFA
-  val sCFA: TimestampWrapper = SCFA
 
   /* BENCHMARKING */
 
@@ -86,16 +78,18 @@ object Main {
 
     def run(machine: MachineConfiguration, graph: Boolean): BenchmarkResult = {
 
+      // TODO: currently, our approach is only implemented for Scheme programs
       val source = loadSource()
       val program = SchemeUtils.computeFreeVar(SchemeUtils.inline(machine.sem.parse(source), machine.sem.initialEnv.toMap))
+
       print(s">> RUNNING BENCHMARK $name [${machine.machine.name}]")
 
       /* WARMUP RUNS */
       var warmupRun = 0
       var warmupTimeout = Timeout.start(Duration(2,"minutes"))
-      while (warmupRun < 30) {
+      while (warmupRun < 50) {
         print(".")
-        machine.run(program, warmupTimeout, false)
+        machine.run(program, warmupTimeout, graph=false)
         warmupRun = warmupRun + 1
       }
 
@@ -104,19 +98,19 @@ object Main {
       var currentTimeout = Timeout.start(Duration(30,"minutes"))
       var lastResult: machine.Output = null
       var ts = List[Long]()
-      while (currentRun < 20) {
+      while (currentRun < 30) {
         print("*")
         val keep = lastResult
         val t0 = System.nanoTime()
-        lastResult = machine.run(program, currentTimeout, false)
+        lastResult = machine.run(program, currentTimeout, graph=false)
         val t1 = System.nanoTime()
         if (lastResult.timedOut) {
           if (ts.isEmpty) {
             println(s"TIMEOUT (states: ${lastResult.numberOfStates})")
             return BenchmarkResult(name, machine, lastResult.numberOfStates, None)
           } else {
-            val mean = (ts.sum / ts.size)
-            println(s"(states: ${keep.numberOfStates}; elapsed $mean)")
+            val mean = ts.sum / ts.size
+            println(s"(states: ${keep.numberOfStates}; elapsed: ${mean}ms)")
             return BenchmarkResult(name, machine, keep.numberOfStates, Some(mean))
           }
         }
@@ -125,8 +119,8 @@ object Main {
         currentRun = currentRun + 1
       }
       /* FINAL RESULTS */
-      val mean = (ts.sum / ts.size)
-      println(s"(states: ${lastResult.numberOfStates} ; elapsed: $mean))")
+      val mean = ts.sum / ts.size
+      println(s"(states: ${lastResult.numberOfStates} ; elapsed: ${mean}ms)")
       BenchmarkResult(name, machine, lastResult.numberOfStates, Some(mean))
     }
   }
@@ -149,11 +143,11 @@ object Main {
     csvWriter.close()
   }
 
-  /* BENCHMARK SUITES */
+  /* BENCHMARKS */
 
+  private implicit def benchmarkToList(b: Benchmark): List[Benchmark] = List(b)
+  private implicit def machineToList(m: MachineConfiguration): List[MachineConfiguration] = List(m)
   private def loadBenchmark(name: String, subfolder: String) = Benchmark(name, s"$BENCHMARK_DIR/$subfolder/$name.scm")
-  implicit def benchmarkToList(b: Benchmark): List[Benchmark] = List(b)
-  implicit def machineToList(m: MachineConfiguration): List[MachineConfiguration] = List(m)
 
   // Gabriel benchmarks
   private def loadGabrielBenchmark(name: String) = loadBenchmark(name, "gabriel")
@@ -171,28 +165,34 @@ object Main {
   private val gabrielBenchmarks = List(boyer, browse, cpstak, dderiv, deriv, destruc, diviter, divrec, puzzle, takl, triangl)
 
   // Other benchmarks
-  private val simpleLoop = loadBenchmark("loop", "varia")
   private val primtest = loadBenchmark("primtest", "varia")
   private val collatz = loadBenchmark("collatz", "varia")
   private val gcipd = loadBenchmark("gcipd", "varia")
+  private val rsa = loadBenchmark("rsa", "varia")
+  private val nqueens = loadBenchmark("nqueens", "varia")
+  private val scalaAMBenchmarks = List(primtest, collatz, gcipd, rsa, nqueens)
 
-  // From Scala-AM tests
-  private def loadTest(name: String) = Benchmark(name, s"test/$name.scm")
-  private def loadGambitTest(name: String) = Benchmark(name, s"test/gambit/$name.scm")
+  private val allBenchmarks = gabrielBenchmarks ++ scalaAMBenchmarks
+
+  /* MACHINES */
+
+  private val lattice = typeLattice
+  private val context = ZeroCFA
+
+  val noGC = new MachineConfiguration(lattice, context) with DefaultAAM
+  val tracingGC = new MachineConfiguration(lattice, context) with TracingGC
+  val tracingGCAlt = new MachineConfiguration(lattice, context) with TracingGCAlt
+  val refWithoutCD = new MachineConfiguration(lattice, context) with RefCountingVanilla
+  val refWithKontCD = new MachineConfiguration(lattice, context) with RefCountingKont
+  val refWithCD = new MachineConfiguration(lattice, context) with RefCounting
+
+  val allMachines = List(noGC, tracingGC, tracingGCAlt, refWithoutCD, refWithKontCD, refWithCD)
 
   /* MAIN ENTRY POINT */
 
-  val noGC = new MachineConfiguration(typeLattice, zeroCFA) with DefaultAAM
-  val tracingGC = new MachineConfiguration(typeLattice, zeroCFA) with TracingGC
-  val tracingGCAlt = new MachineConfiguration(typeLattice, zeroCFA) with TracingGCAlt
-  val refWithoutCD = new MachineConfiguration(typeLattice, zeroCFA) with RefCountingVanilla
-  val refWithKontCD = new MachineConfiguration(typeLattice, zeroCFA) with RefCountingKont
-  val refWithCD = new MachineConfiguration(typeLattice, zeroCFA) with RefCounting
-  val allMachines = List(noGC, tracingGC, tracingGCAlt, refWithoutCD, refWithKontCD, refWithCD)
-
   def main(args: Array[String]): Unit = {
-    val timestamp = new java.util.Date().toString
-    val results = run(cpstak, allMachines)
+    val timestamp = System.currentTimeMillis()
+    val results = run(allBenchmarks, allMachines)
     exportCSV(results, filename = s"results-$timestamp")
   }
 }
