@@ -5,7 +5,7 @@ Scala-AM is initially based on the theoretical framework of Abstracting Abstract
 For more information on the framework, look [[https://github.com/acieroid/scala-am][here]] or consult the following publications:
   - Scala-AM: A Modular Static Analysis Framework, SCAM 2016, [[http://soft.vub.ac.be/Publications/2016/vub-soft-tr-16-07.pdf][pdf]], [[https://zenodo.org/badge/latestdoi/23603/acieroid/scala-am][doi]].
   - Building a Modular Static Analysis Framework in Scala, [[http://soft.vub.ac.be/Publications/2016/vub-soft-tr-16-13.pdf][pdf]].
-  - Mailbox abstractions for static analysis of actor programs, [[http://drops.dagstuhl.de/opus/volltexte/2017/7254/pdf/LIPIcs-ECOOP-2017-25.pdf][pdf]].
+  - Mailbox abstractions for static analysis of actor programs, ECOOP 2017,  [[http://drops.dagstuhl.de/opus/volltexte/2017/7254/pdf/LIPIcs-ECOOP-2017-25.pdf][pdf]].
 
 * Abstract Reference Counting
 
