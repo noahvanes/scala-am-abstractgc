@@ -65,7 +65,7 @@ case class GCKontStore[Addr : Address, KontAddr : KontAddress](content: Map[Kont
     })
 
   def collect(root: KontAddr): (GCKontStore[Addr,KontAddr],Set[Addr]) = {
-    val (marked,addrs) = mark(root,Set(),Set())
+    val (marked, addrs) = mark(root, Set(), Set())
     val updatedContent = content.filterKeysStrict(marked)
     val updatedRefs = refs.filterKeysStrict(marked).withDefaultValue(Set())
     val updatedVRefs = vrefs.filterKeysStrict(marked).withDefaultValue(Set())
@@ -93,11 +93,11 @@ case class GCKontStore[Addr : Address, KontAddr : KontAddress](content: Map[Kont
   /* PERFORMANCE OPTIMIZATION */
 
   override def equals(that: Any): Boolean = that match {
-    case kstore : GCKontStore[Addr,KontAddr] => this.content == kstore.content
+    case kstore : GCKontStore[Addr,KontAddr] => this.storedHashCode == kstore.storedHashCode && this.content == kstore.content
     case _ => false
   }
 
-  lazy val storedHashCode = content.hashCode
+ val storedHashCode = content.hashCode
   override def hashCode = storedHashCode
 }
 
@@ -113,7 +113,7 @@ case class GCKontStoreAlt[Addr : Address, KontAddr : KontAddress](content: Map[K
     })
 
   def collect(root: KontAddr): (GCKontStoreAlt[Addr,KontAddr],Set[Addr]) = {
-    val (marked,addrs) = mark(root,Set(),Set())
+    val (marked, addrs) = mark(root, Set(), Set())
     val updatedContent = content.filterKeysStrict(marked)
     val updatedRefs = refs.filterKeysStrict(marked).withDefaultValue(Set())
     val updatedVRefs = vrefs.filterKeysStrict(marked).withDefaultValue(Set())
@@ -145,11 +145,11 @@ case class GCKontStoreAlt[Addr : Address, KontAddr : KontAddress](content: Map[K
   /* PERFORMANCE OPTIMIZATION */
 
   override def equals(that: Any): Boolean = that match {
-    case kstore : GCKontStoreAlt[Addr,KontAddr] => this.content == kstore.content
+    case kstore : GCKontStoreAlt[Addr,KontAddr] => this.storedHashCode == kstore.storedHashCode && this.content == kstore.content
     case _ => false
   }
 
-  lazy val storedHashCode = content.hashCode
+  val storedHashCode = content.hashCode
   override def hashCode = storedHashCode
 }
 
@@ -164,7 +164,7 @@ case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress]
   extends KontStore[KontAddr] {
 
   def pop(newRoot: KontAddr): (RefCountingKontStore[Addr,KontAddr],Iterable[Addr]) = {
-    if(ds.equiv(root,newRoot)) {
+    if (ds.equiv(root, newRoot)) {
       (this.copy(root = newRoot), Iterable.empty)
     } else {
       var updatedContent = this.content
@@ -174,8 +174,8 @@ case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress]
       var vdeleted = List[Addr]()
       val toDealloc = scala.collection.mutable.Queue[KontAddr](this.root)
       var marked = Set[KontAddr](this.root, newRoot) // do not touch the new root!
-                                                     // we can show that oldRoot -> newRoot is the only
-                                                     // transition between oldRootCls and newRootCls !
+      // we can show that oldRoot -> newRoot is the only
+      // transition between oldRootCls and newRootCls !
       while (toDealloc.nonEmpty) {
         val addr = toDealloc.dequeue
         val (konts, kaddrs, vrefs) = this.content(addr)
@@ -376,10 +376,12 @@ case class RefCountingKontStoreVanilla[Addr : Address, KontAddr : KontAddress]
     if (in(root).isEmpty && root != newRoot) {
       toDealloc.enqueue(root)
     }
-    var updatedIn = in
-    while (toDealloc.nonEmpty) { updatedIn = dealloc(toDealloc.dequeue, updatedIn, newRoot, toDealloc, toDelete) }
-    val updatedHc = toDelete.foldLeft(this.hc)((acc,ref) => content(ref)._1.foldLeft(acc)((acc2,kont) => acc2 - kont.hashCode()))
-    val deletedAddr = toDelete.foldLeft(Set[Addr]())((acc,ref) => acc ++ content(ref)._3)
+    var updatedIn: AddrCount = in
+    while (toDealloc.nonEmpty) {
+      updatedIn = dealloc(toDealloc.dequeue, updatedIn, newRoot, toDealloc, toDelete)
+    }
+    val updatedHc = toDelete.foldLeft(this.hc)((acc, ref) => content(ref)._1.foldLeft(acc)((acc2, kont) => acc2 - kont.hashCode()))
+    val deletedAddr = toDelete.foldLeft(Set[Addr]())((acc, ref) => acc ++ content(ref)._3)
     (RefCountingKontStoreVanilla(newRoot, content -- toDelete, updatedIn -- toDelete, updatedHc), deletedAddr)
   }
 

@@ -1,222 +1,215 @@
-import scala.io.StdIn
-import Util._
-import scala.util.{Try, Success, Failure}
+object Main {
 
-/**
- * Before looking at this, we recommend seeing how to use this framework. A
- * detailed example is available in LambdaCalculus.scala.
- *
- * This is the entry point. It parses the arguments, parses the input file and
- * launches an abstract machine on the parsed expression (or launches a REPL if no
- * input file is given). The pipeline goes as follows:
- *   1. The input program is parsed. For Scheme programs, it is done by:
- *      - Parsing the file as a list of s-expressions (exp/SExp.scala,
- *        exp/SExpParser.scala)
- *      - Compiling these s-expressions into Scheme expressions
- *        (exp/scheme/Scheme.scala)
+  /* -- IMPORTS -- */
 
- *   2. To run the program, we need an abstract machine and some
- *      semantics. Semantics definitions have to implement the Semantics
- *      interface (semantics/Semantics.scala).
+  import Util._
+  import scala.io.Source
+  import scala.concurrent.duration.Duration
+  import scala.language.existentials
+  import java.io.{BufferedWriter, FileWriter}
+  import scala.collection.JavaConversions._
+  import au.com.bytecode.opencsv.CSVWriter
+  import java.io.File
 
- *   3. Once the abstract machine is created and we have a semantics for the
- *      program we want to analyze, the abstract machine can perform its
- *      evaluation, relying on methods of the semantics class to know how to
- *      evaluate expressions. The abstract machine only deals with which states
- *      to evaluate in which order, where to store values, where to store
- *      continuations, how to push and pop continuations, etc. The semantics
- *      encode what to do when encountering a program construct. For example,
- *      the semantics can tell what to evaluate next, that a continuation needs
- *      to be pushed, or that a variable needs to be updated. The abstract
- *      machine will then respectively evaluate the expression needed, push the
- *      continuation, or update the variable.
- *
- *      Multiple abstract machine implementations are available, defined in the
- *      machine/ directory. Every abstract machine implementation has to
- *      implement the AbstractMachine interface (machine/AbstractMachine.scala).
- *
- *      The abstract machine also uses a lattice to represent values. Lattices
- *      should implement the JoinLattice trait that can be found in
- *      JoinLattice.scala, which provides the basic features of a lattice.
- *
- *  If you want to:
- *  - Support a new language: you will need:
- *    - A parser, you can look into exp/SExpParser.scala as an inspiration. If
- *      your language is s-expression based, you can use this parser and compile
- *      s-expressions into your abstract grammar. To do so, look at
- *      exp/scheme/Scheme.scala.
- *    - An abstract grammar, look at exp/SExp.scala or the SchemeExp class in
- *      exp/scheme/Scheme.scala.
- *    - A semantics, look at semantics/anf/ANFSemantics.scala for a simple example.
- *    - Support for your language operations at the lattice level. For this,
- *      you'll probably need to extend the lattices (see
- *      lattice/scheme/SchemeLattice.scala, lattice/scheme/ModularLattice.scala)
- *  - Play with abstract machines, you can look into AAM.scala.
- *  - Implement some kind of analysis, look at examples/LambdaCalculus.scala and
- *    examples/TaintAnalysis.scala.
- */
-object OldMain {
-  /** Run a machine on a program with the given semantics. If @param output is
-    * set, generate a dot graph visualizing the computed graph in the given
-    * file. Return the number of states and time taken. */
-  def run[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp](machine: AbstractMachine[Exp, Abs, Addr, Time], sem: Semantics[Exp, Abs, Addr, Time])(program: String, outputDot: Option[String], outputJSON: Option[String], timeout: Option[Long], inspect: Boolean): (Int, Double) = {
-    println(s"Running ${machine.name} with lattice ${JoinLattice[Abs].name} and address ${Address[Addr].name}")
-    val result = machine.eval(sem.parse(program), sem, !outputDot.isEmpty || !outputJSON.isEmpty, Timeout.start(timeout))
-    outputDot.foreach(result.toFile(_)(GraphDOTOutput))
-    outputJSON.foreach(result.toFile(_)(GraphJSONOutput))
-    if (result.timedOut) println(s"${scala.io.AnsiColor.RED}Timeout was reached${scala.io.AnsiColor.RESET}")
-    println(s"Visited ${result.numberOfStates} states in ${result.time} seconds, ${result.finalValues.size} possible results: ${result.finalValues}")
-    (result.numberOfStates, result.time)
+  /* -- CONFIGURATION -- */
+
+  // configure input/output locations for benchmarks
+  private val BENCHMARK_DIR = "benchmarks"            // the root folder where the source code for the benchmarks can be found
+  private val OUTPUT_DIR    = "output"                // the root folder where the benchmark results are exported
+  private val OUTPUT_FILE   = "overhead-benchmarks"   // the name of the output file (which will be exported in CSV format)
+
+  // configure benchmark parameters
+  private val MAX_WARMUP_RUNS    = 100    // maximum number of warmup runs per benchmark program
+  private val MAX_WARMUP_TIME    = 120    // maximum total time spent on warmup (in seconds) per benchmark program
+  private val NUMBER_OF_TRIALS   = 30     // number of trials/measurements per benchmark program
+  private val MAX_TIME_PER_TRIAL = 60     // timeout per trial (in seconds)
+                                          // NOTE: as memory usage increases throughout a trial, higher values of MAX_TIME_PER_TRIAL might cause out-of-memory exceptions
+
+  // congifure context-sensitivity of the analysis
+  private val CONTEXT_SENSITIVITY = zeroCFA       // use a context-insensitive analysis (i.e., 0-CFA) (<- used for the evaluation in the paper)
+  //private val CONTEXT_SENSITIVITY = kCFA(1)     // uncomment to switch to a context-sensitive analysis using 1-CFA
+  //private val CONTEXT_SENSITIVITY = kCFA(k)     // uncomment to switch to a context-sensitive analysis using k-CFA
+
+  // configure abstract domain of the analysis
+  private val ABSTRACT_DOMAIN = typeLattice                     // use a type lattice, which abstracts values using the set of all possible types (<- used for the evaluation in the paper)
+  //private val ABSTRACT_DOMAIN = constantPropagationLattice    // uncomment to switch to a constant-propagation lattice, which is similar to a typeLattice but more precisely, in that for constant values it can keep track of the concrete value as well
+  //private val ABSTRACT_DOMAIN = kPointsToLattice(k)           // uncomment to switch to a k-points-to lattice, which is a generalization of a constantPropagationLattice, in that it can keep track of up to k concrete values
+  //private val ABSTRACT_DOMAIN = concreteLattice               // uncomment to switch to a concrete lattice, which abstracts values using the set of all possible concrete values (may not terminate)
+  //private val ABSTRACT_DOMAIN = boundedIntegerLattice(b)      // uncomment to switch to a bounded-integer lattice, which is similar to a concreteLattice but only keeps concrete values for integers between [-b,b] (more likely to terminate)
+
+  // configure which abstract interpreters / machines to compare in the benchmarks
+  private val ABSTRACT_MACHINES = List(
+  //  machineAAM,                 // uncomment to include an abstract interpreter without abstract GC (i.e., \rightarrow in the paper)
+    machineAAMGC,               // uncomment to include an abstract interpreter with abstract tracing GC at every step (i.e., \rightarrow_{\Gamma} in the paper)
+  //  machineAAMGC_gammaCFA,      // uncomment to include an abstract interpreter which performs abstract tracing GC at every join operation in the store (i.e., \rightarrow_{\GammaCFA} in the paper)
+  //  machineAAMARC,              // uncomment to include an abstract interpreter which performs abstract reference counting without cycle detection (i.e., \rightarrow_{arc} in the paper)
+  //  machineAAMARCplus,          // uncomment to include an abstract interpreter which performs abstract reference counting with only cycle detection in the kontinuation store (i.e., \rightarrow_{arc+} in the paper)
+    machineAAMARCplusplus         // the abstract interpreter which performs abstract reference counting with full cycle detection (i.e., \rightarrow_{arc++} in the paper)
+  )
+
+  // configure which benchmarks to run (uncomment to include; using the same names as in the paper)
+  private val BENCHMARK_PROGRAMS = List(
+    // boyer,
+    // browse,
+    // cpstak,
+    // dderiv,
+    // deriv,
+    // destruc,
+    // diviter,
+    // divrec,
+    // puzzle,
+    // takl,
+    // triangl,
+    // primtest,
+    //collatz,
+    //rsa,
+    //gcipd,
+    nqueens
+  )
+
+  // configure whether a graph should be generated or not
+  // (NOTE: to avoid the impact of graph construction on performance, the graph will be generated after the actual benchmark measurements)
+  private val OUTPUT_GRAPH = false    // by default, generating graphs is turned off
+  //private val OUTPUT_GRAPH = true   // uncomment to generate a graph (which will be exported as `graph.dot` in the output folder)
+
+  /* -- SUPPORTING DEFINITIONS -- */
+
+  // timestamp definitions
+  private def zeroCFA = ZeroCFA
+  private def kCFA(k: Int) = KCFA(k)
+
+  // lattice definitions
+  private def typeLattice: SchemeLattice                  = new MakeSchemeLattice[Type.S, Concrete.B, Type.I, Type.F, Type.C, Type.Sym](false)
+  private def constantPropagationLattice: SchemeLattice   = new MakeSchemeLattice[ConstantPropagation.S, Concrete.B, ConstantPropagation.I, ConstantPropagation.F, ConstantPropagation.C, ConstantPropagation.Sym](false)
+  private def kPointsToLattice(k: Int): SchemeLattice = {
+    val kpts = new KPointsTo(k)
+    new MakeSchemeLattice[kpts.S, Concrete.B, kpts.I, kpts.F, kpts.C, kpts.S](false)
+  }
+  private def concreteLattice: SchemeLattice              = new MakeSchemeLattice[Concrete.S, Concrete.B, Concrete.I, Concrete.F, Concrete.C, Concrete.Sym](false)
+  private def boundedIntegerLattice(bound: Int): SchemeLattice = {
+    val bounded = new BoundedInteger(bound)
+    new MakeSchemeLattice[Type.S, Concrete.B, bounded.I, Type.F, Type.C, Type.Sym](false)
   }
 
-  def main(args: Array[String]) {
-      Config.parser.parse(args, Config.Config()).foreach(config => {
-        val lattice: SchemeLattice = config.lattice match {
-          case Config.Lattice.Concrete => new MakeSchemeLattice[Concrete.S, Concrete.B, Concrete.I, Concrete.F, Concrete.C, Concrete.Sym](config.counting)
-          case Config.Lattice.TypeSet => new MakeSchemeLattice[Type.S, Concrete.B, Type.I, Type.F, Type.C, Type.Sym](config.counting)
-          case Config.Lattice.BoundedInt =>
-            val bounded = new BoundedInteger(config.bound)
-            new MakeSchemeLattice[Type.S, Concrete.B, bounded.I, Type.F, Type.C, Type.Sym](config.counting)
-          case Config.Lattice.ConstantPropagation => new MakeSchemeLattice[ConstantPropagation.S, Concrete.B, ConstantPropagation.I, ConstantPropagation.F, ConstantPropagation.C, ConstantPropagation.Sym](config.counting)
-        }
-        implicit val isSchemeLattice: IsSchemeLattice[lattice.L] = lattice.isSchemeLattice
+  // machine definitions
+  private def machineAAM = new AAMOriginal[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
+  private def machineAAMGC = new AAMGC[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
+  private def machineAAMGC_gammaCFA = new AAMGCAlt[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
+  private def machineAAMARC = new AAMRefCountingVanilla[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
+  private def machineAAMARCplus = new AAMRefCountingKont[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
+  private def machineAAMARCplusplus = new AAMRefCounting[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
 
-        config.language match {
-          case Config.Language.Scheme =>
-            val time: TimestampWrapper = if (config.concrete) ConcreteTimestamp else ZeroCFA
-            implicit val isTimestamp = time.isTimestamp
+  // benchmark definitions
+  private def loadBenchmark(name: String, subfolder: String) = Benchmark(name, s"$BENCHMARK_DIR/$subfolder/$name.scm")
+  private def loadGabrielBenchmark(name: String) = loadBenchmark(name,"gabriel")
+  private def loadScalaAMBenchmark(name: String) = loadBenchmark(name,"scala-am")
+  private def boyer    = loadGabrielBenchmark("boyer")
+  private def browse   = loadGabrielBenchmark("browse")
+  private def cpstak   = loadGabrielBenchmark("cpstak")
+  private def dderiv   = loadGabrielBenchmark("dderiv")
+  private def deriv    = loadGabrielBenchmark("deriv")
+  private def destruc  = loadGabrielBenchmark("destruc")
+  private def diviter  = loadGabrielBenchmark("diviter")
+  private def divrec   = loadGabrielBenchmark("divrec")
+  private def puzzle   = loadGabrielBenchmark("puzzle")
+  private def takl     = loadGabrielBenchmark("takl")
+  private def triangl  = loadGabrielBenchmark("triangl")
+  private def primtest = loadScalaAMBenchmark("primtest")
+  private def collatz  = loadScalaAMBenchmark("collatz")
+  private def rsa      = loadScalaAMBenchmark("rsa")
+  private def gcipd    = loadScalaAMBenchmark("gcipd")
+  private def nqueens  = loadScalaAMBenchmark("nqueens")
 
-            val address: AddressWrapper = config.address match {
-              case Config.Address.Classical => ClassicalAddress
-              case Config.Address.ValueSensitive => ValueSensitiveAddress
-            }
-            implicit val isAddress = address.isAddress
+  /* -- BENCHMARKING -- */
 
-            val machine = config.machine match {
-              case Config.Machine.AAM => new AAM[SchemeExp, lattice.L, address.A, time.T]
-              case Config.Machine.AAMGlobalStore => new AAMAACP4F[SchemeExp, lattice.L, address.A, time.T](AAMKAlloc)
-              case Config.Machine.ConcreteMachine => new ConcreteMachine[SchemeExp, lattice.L, address.A, time.T]
-              case Config.Machine.AAC => new AAMAACP4F[SchemeExp, lattice.L, address.A, time.T](AACKAlloc)
-              case Config.Machine.Free => new AAMAACP4F[SchemeExp, lattice.L, address.A, time.T](P4FKAlloc)
-            }
+  // auxiliary definitions
+  private type Machine = AbstractMachine[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
+  private implicit def isSchemeLattice: IsSchemeLattice[ABSTRACT_DOMAIN.L] = ABSTRACT_DOMAIN.isSchemeLattice
+  private implicit def isTimeStamp: Timestamp[CONTEXT_SENSITIVITY.T] = CONTEXT_SENSITIVITY.isTimestamp
+  private def primitives = new SchemePrimitives[ClassicalAddress.A, ABSTRACT_DOMAIN.L]
+  private def sem = new SchemeSemantics[ABSTRACT_DOMAIN.L, ClassicalAddress.A, CONTEXT_SENSITIVITY.T](primitives)
 
-            val sem = new SchemeSemantics[lattice.L, address.A, time.T](new SchemePrimitives[address.A, lattice.L])
-
-            replOrFile(config.file, program => run(machine, sem)(program, config.dotfile, config.jsonfile, config.timeout.map(_.toNanos), config.inspect))
-          case Config.Language.CScheme =>
-            val clattice: CSchemeLattice = new MakeCSchemeLattice[lattice.L]
-            implicit val isCSchemeLattice = clattice.isCSchemeLattice
-
-            val time: TimestampWrapper = if (config.concrete) ConcreteTimestamp else ZeroCFA
-            implicit val isTimestamp = time.isTimestamp
-
-            val address: AddressWrapper = config.address match {
-              case Config.Address.Classical => ClassicalAddress
-              case Config.Address.ValueSensitive => ValueSensitiveAddress
-            }
-            implicit val isAddress = address.isAddress
-
-            val machine = config.machine match {
-              case Config.Machine.AAM => new ConcurrentAAM[SchemeExp, clattice.L, address.A, time.T, ContextSensitiveTID](AllInterleavings)
-              case _ => throw new Exception(s"unsupported machine for CScheme: ${config.machine}")
-            }
-
-            val sem = new CSchemeSemantics[clattice.L, address.A, time.T, ContextSensitiveTID](new CSchemePrimitives[address.A, clattice.L])
-            replOrFile(config.file, program => run(machine, sem)(program, config.dotfile, config.jsonfile, config.timeout.map(_.toNanos), config.inspect))
-          case Config.Language.AScheme =>
-            val alattice: ASchemeLattice = new MakeASchemeLattice[lattice.L]
-            implicit val isASchemeLattice = alattice.isASchemeLattice
-
-            import ActorTimestamp.fromTime
-            val time: ActorTimestampWrapper = if (config.concrete) ConcreteTimestamp else KMessageTagSensitivity(1)
-            implicit val isTimestamp = time.isActorTimestamp
-
-            val address: AddressWrapper = config.address match {
-              case Config.Address.Classical => ClassicalAddress
-              case Config.Address.ValueSensitive => ValueSensitiveAddress
-            }
-            implicit val isAddress = address.isAddress
-
-            val mbox = config.mbox match {
-              case Config.Mbox.Powerset => new PowersetMboxImpl[ContextSensitiveTID, alattice.L]
-              case Config.Mbox.BoundedList => new BoundedListMboxImpl[ContextSensitiveTID, alattice.L](config.mboxBound)
-              case Config.Mbox.BoundedMultiset => new BoundedMultisetMboxImpl[ContextSensitiveTID, alattice.L](config.mboxBound)
-              case Config.Mbox.Graph => new GraphMboxImpl[ContextSensitiveTID, alattice.L]
-            }
-
-            val machine = config.machine match {
-              case Config.Machine.AAM => new ActorsAAM[SchemeExp, alattice.L, address.A, time.T, ContextSensitiveTID](mbox)
-              case Config.Machine.AAMGlobalStore => new ActorsAAMGlobalStore[SchemeExp, alattice.L, address.A, time.T, ContextSensitiveTID](mbox)
-              case _ => throw new Exception(s"unsupported machine for AScheme: ${config.machine}")
-            }
-
-            val visitor = new RecordActorVisitor[SchemeExp, alattice.L, address.A]
-            val sem = new ASchemeSemanticsWithVisitorAndOptimization[alattice.L, address.A, time.T, ContextSensitiveTID](new SchemePrimitives[address.A, alattice.L], visitor)
-            val N = 1
-            val warmup = if (N > 1) 2 else 0 // 2 runs that are ignored to warm up
-            val (states, times) = (1 to N+warmup).map(i =>
-              runOnFile(config.file.get, program => run(machine, sem)(program, config.dotfile, config.jsonfile, config.timeout.map(_.toNanos), config.inspect))).unzip
-              println("States: " + states.mkString(", "))
-            println("Time: " + times.drop(warmup).mkString(","))
-            if (N == 1) visitor.print
-        }
-      })
-    Profiler.print
-  }
-}
-
-object ScalaAM {
-  /** Simply run a program and return the result. Compute the graph is @param graph is true. */
-  def run[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp](machine: AbstractMachine[Exp, Abs, Addr, Time], sem: Semantics[Exp, Abs, Addr, Time])(program: String, graph: Boolean = true, timeout: Option[Long] = None): AbstractMachine[Exp, Abs, Addr, Time]#Output = {
-    val result = machine.eval(sem.parse(program), sem, graph, Timeout.start(timeout))
-    if (result.timedOut) println(s"${scala.io.AnsiColor.RED}Timeout was reached${scala.io.AnsiColor.RESET}")
-    result
-  }
-  /** Some lattice instanciations */
-  val typeLattice = new MakeSchemeLattice[Type.S, Concrete.B, Type.I, Type.F, Type.C, Type.Sym](false)
-  val concreteLattice = new MakeSchemeLattice[Concrete.S, Concrete.B, Concrete.I, Concrete.F, Concrete.C, Concrete.Sym](false)
-  val cpLattice = new MakeSchemeLattice[ConstantPropagation.S, Concrete.B, ConstantPropagation.I, ConstantPropagation.F, ConstantPropagation.C, ConstantPropagation.Sym](false)
-
-  /* You can then launch a console to load ScalaAM (sbt console), and perform the following:
-   * > import ScalaAM._
-   * > run(new AAM[SchemeExp, cpLattice.L, ClassicalAddress.A, ZeroCFA.T], new SchemeSemantics[cpLattice.L, ClassicalAddress.A, ZeroCFA.T](new SchemePrimitives[ClassicalAddress.A, cpLattice.L]))("(* 2 3)")
-   * From there on, you can inspect the result.
-   */
-
-  /* Or you can use one of the preinstantiated machines:
-   * > ScalaAM.FastConcrete.eval("(+ 1 2 3)")
-   * Or with a REPL:
-   * > ScalaAM.repl(ScalaAM.FastConcrete.eval _)
-   */
-  object FastConcrete {
-    def eval(program: String, timeout: Option[Long] = None): Option[concreteLattice.L] = {
-      val output = run[SchemeExp, concreteLattice.L, ClassicalAddress.A, ConcreteTimestamp.T](
-        new ConcreteMachine[SchemeExp, concreteLattice.L, ClassicalAddress.A, ConcreteTimestamp.T],
-        new SchemeSemantics[concreteLattice.L, ClassicalAddress.A, ConcreteTimestamp.T](new SchemePrimitives[ClassicalAddress.A, concreteLattice.L]))(program, false, timeout)
-        assert(output.finalValues.size <= 1)
-      output.finalValues.headOption
+  // format for benchmarks
+  case class Benchmark(name: String, location: String) {
+    assume({ val f = new File(location); f.exists && f.isFile })
+    def loadSource(): String = {
+      val data = Source.fromFile(location)
+      try data.mkString finally data.close()
+    }
+    def loadSchemeProgram(): SchemeExp = {
+      val source = loadSource()
+      val parsed = sem.parse(source)
+      val optimized = SchemeUtils.inline(parsed,sem.initialEnv.toMap)
+      SchemeUtils.computeFreeVar(optimized)
     }
   }
 
-  object ConstantPropagationAAM {
-    def eval(program: String, timeout: Option[Long] = None): Set[cpLattice.L] = {
-      val output = run[SchemeExp, cpLattice.L, ClassicalAddress.A, ZeroCFA.T](
-        new AAM[SchemeExp, cpLattice.L, ClassicalAddress.A, ZeroCFA.T],
-        new SchemeSemantics[cpLattice.L, ClassicalAddress.A, ZeroCFA.T](new SchemePrimitives[ClassicalAddress.A, cpLattice.L]))(program, false, timeout)
-      output.finalValues
+  // format for benchmark results
+  case class BenchmarkResult(id: String, numberOfStates: Long, time: Option[Long])
+
+  // benchmarking function
+  private def runBenchmark(benchmark: Benchmark, machine: Machine): BenchmarkResult = {
+    val name = s"${benchmark.name}-${machine.name}"
+    println(s">> RUNNING BENCHMARK $name")
+    val program = benchmark.loadSchemeProgram()
+    // warmup runs
+    var warmupRun = 0
+    val warmupTimeout = Timeout.start(Duration(MAX_WARMUP_TIME,"seconds"))
+    while (warmupRun < MAX_WARMUP_RUNS && !warmupTimeout.reached) {
+      print(".")
+      machine.eval(program,sem,false,warmupTimeout)
+      warmupRun = warmupRun + 1
     }
+    // actual measurements
+    var trial = 0
+    var numberOfStates = 0
+    var measurements = List[Long]()
+    while (trial < NUMBER_OF_TRIALS) {
+      print("*")
+      val t0 = System.nanoTime()
+      val result = machine.eval(program,sem,false,Timeout.start(Duration(MAX_TIME_PER_TRIAL,"seconds")))
+      val t1 = System.nanoTime()
+      val elapsed = (t1 - t0) / 1000000   // convert ns into ms
+
+      if (result.timedOut) {      // assumption: if a benchmark times out once, it will timeout again
+        println(s"\n=> TIMEOUT | STATES: ${result.numberOfStates}")
+        return BenchmarkResult(name,result.numberOfStates,None)
+      }
+      measurements = elapsed :: measurements
+      numberOfStates = result.numberOfStates
+      trial = trial + 1
+    }
+    // optional: export a state graph
+    if (OUTPUT_GRAPH) {
+      val result = machine.eval(program,sem,true,Timeout.start(Duration(MAX_TIME_PER_TRIAL,"seconds")))
+      result.toFile(s"$OUTPUT_DIR/graph.dot")(GraphDOTOutput)
+    }
+    // benchmark result
+    val mean = measurements.sum / measurements.size
+    println(s"\n=> TIME: $mean | STATES: $numberOfStates")
+    BenchmarkResult(name,numberOfStates,Some(mean))
   }
 
-  object TypeAAM {
-    def eval(program: String, timeout: Option[Long] = None): Set[typeLattice.L] = {
-      val output = run[SchemeExp, typeLattice.L, ClassicalAddress.A, ZeroCFA.T](
-        new AAM[SchemeExp, typeLattice.L, ClassicalAddress.A, ZeroCFA.T],
-        new SchemeSemantics[typeLattice.L, ClassicalAddress.A, ZeroCFA.T](new SchemePrimitives[ClassicalAddress.A, typeLattice.L]))(program, false, timeout)
-      output.finalValues
+  private def runBenchmarks(benchmarks: List[Benchmark], machines: List[Machine]): List[BenchmarkResult]
+    = benchmarks.flatMap(benchmark => machines.map(machine => runBenchmark(benchmark,machine)))
+
+  private def exportCSV(results: List[BenchmarkResult], filename: String): Unit = {
+    val outputPath = s"$OUTPUT_DIR/$filename.csv"
+    val outputFile = new BufferedWriter(new FileWriter(outputPath))
+    val csvWriter = new CSVWriter(outputFile)
+    var csvContents = List(Array("benchmark", "numberOfStates", "time"))
+    results foreach { result =>
+      val name = result.id
+      val numberOfStates = result.numberOfStates.toString
+      val time = if (result.time.isDefined) { result.time.get.toString } else { "timeout" }
+      csvContents = Array(name, numberOfStates, time) :: csvContents
     }
+    csvWriter.writeAll(csvContents.reverse)
+    csvWriter.close()
   }
 
-  def repl[A](eval: (String, Option[Long]) => A): Unit = {
-    Util.replOrFile(None, p => println(eval(p, None)))
+  def main(args: Array[String]): Unit = {
+    val results = runBenchmarks(BENCHMARK_PROGRAMS, ABSTRACT_MACHINES)
+    exportCSV(results, OUTPUT_FILE)
   }
 }

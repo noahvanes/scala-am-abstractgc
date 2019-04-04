@@ -1,0 +1,3 @@
+"benchmark","numberOfStates","time"
+"nqueens-AAMGC","37847","7542"
+"nqueens-AAMRefCounting","31857","423"

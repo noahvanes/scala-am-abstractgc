@@ -84,14 +84,14 @@ extends Store[Addr,Abs] {
 
   private def incRootRef(a: Addr, currentIn: AddrCount, currentDS: DisjointSet[Addr]) = {
     val cls = currentDS.find(a)
-    val (counts,refs) = currentIn(cls)
-    currentIn + (cls -> (counts+1,refs))
+    val (counts, refs) = currentIn(cls)
+    currentIn + (cls -> (counts + 1, refs))
   }
 
   private def incEdgeRef(from: Addr, to: Addr, currentIn: AddrCount, currentDS: DisjointSet[Addr]) = {
     val cls = currentDS.find(to)
-    val (counts,refs) = currentIn(cls)
-    currentIn + (cls -> (counts,refs+from))
+    val (counts, refs) = currentIn(cls)
+    currentIn + (cls -> (counts, refs + from))
   }
 
   def incRefs(addrs: Iterable[Addr]): RefCountingStore[Addr,Abs] =
@@ -153,17 +153,17 @@ extends Store[Addr,Abs] {
     // For every addr in addrs:
     // - decrement the reference count of the corresponding scc
     // - if the SCC can be deallocated, enqueue it in toDealloc
-    var updatedIn = addrs.foldLeft(this.in)((acc,ref) => deallocRootRef(ref,acc,toDealloc))
+    var updatedIn = addrs.foldLeft(this.in)((acc, ref) => deallocRootRef(ref, acc, toDealloc))
 
-    // Deallocate a SCC in every iteration
-    while (toDealloc.nonEmpty) {
-      val cls = toDealloc.dequeue
-      if (deallocated.add(cls)) {
-        updatedIn = deallocSCC(cls, updatedIn, toDealloc, toDelete)
+      // Deallocate a SCC in every iteration
+      while (toDealloc.nonEmpty) {
+        val cls = toDealloc.dequeue
+        if (deallocated.add(cls)) {
+          updatedIn = deallocSCC(cls, updatedIn, toDealloc, toDelete)
+        }
       }
-    }
 
-    val updatedHc = toDelete.foldLeft(this.hc)((acc,ref) => acc - content(ref)._1.hashCode())
+    val updatedHc = toDelete.foldLeft(this.hc)((acc, ref) => acc - content(ref)._1.hashCode())
     RefCountingStore(content -- toDelete, updatedIn -- toDelete, ds -- toDelete, updatedHc)
   }
 
@@ -310,13 +310,13 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
   def lookupBot(a: Addr) = lookup(a).getOrElse(JoinLattice[Abs].bottom)
 
   private def incRootRef(a: Addr, currentIn: AddrCount) = {
-    val (counts,refs) = currentIn(a)
-    currentIn + (a -> (counts+1,refs))
+    val (counts, refs) = currentIn(a)
+    currentIn + (a -> (counts + 1, refs))
   }
 
   private def incEdgeRef(from: Addr, to: Addr, currentIn: AddrCount) = {
-    val (counts,refs) = currentIn(to)
-    currentIn + (to -> (counts,refs+from))
+      val (counts, refs) = currentIn(to)
+      currentIn + (to -> (counts, refs + from))
   }
 
   def incRefs(addrs: Iterable[Addr]): RefCountingStoreVanilla[Addr,Abs] =
@@ -349,9 +349,11 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
   def decRefs(addrs: Iterable[Addr]): RefCountingStoreVanilla[Addr,Abs] = {
     val toDelete = scala.collection.mutable.Queue[Addr]()
     val toDealloc = scala.collection.mutable.Queue[Addr]()
-    var updatedIn = addrs.foldLeft(this.in)((acc,ref) => deallocRootRef(ref,acc,toDealloc))
-    while (toDealloc.nonEmpty) { updatedIn = dealloc(toDealloc.dequeue, updatedIn, toDealloc, toDelete) }
-    val updatedHc = toDelete.foldLeft(this.hc)((acc,ref) => acc - content(ref)._1.hashCode())
+    var updatedIn = addrs.foldLeft(this.in)((acc, ref) => deallocRootRef(ref, acc, toDealloc))
+    while (toDealloc.nonEmpty) {
+      updatedIn = dealloc(toDealloc.dequeue, updatedIn, toDealloc, toDelete)
+    }
+    val updatedHc = toDelete.foldLeft(this.hc)((acc, ref) => acc - content(ref)._1.hashCode())
     RefCountingStoreVanilla(content -- toDelete, updatedIn -- toDelete, updatedHc)
   }
 
@@ -424,7 +426,7 @@ case class GCStore[Addr : Address, Abs : JoinLattice]
     }
 
     def collect(roots: Set[Addr]): GCStore[Addr,Abs] = {
-      val marked = roots.foldLeft(Set[Addr]())((acc,ref) => mark(ref,acc))
+      val marked = roots.foldLeft(Set[Addr]())((acc, ref) => mark(ref, acc))
       sweep(marked)
     }
 
@@ -443,11 +445,11 @@ case class GCStore[Addr : Address, Abs : JoinLattice]
     /* PERFORMANCE OPTIMIZATION */
 
     override def equals(that: Any): Boolean = that match {
-      case store: GCStore[Addr,Abs] => this.content == store.content
+      case store: GCStore[Addr,Abs] => this.storedHashCode == store.storedHashCode && this.content == store.content
       case _ => false
     }
 
-    lazy val storedHashCode = content.hashCode
+    val storedHashCode = content.hashCode
     override def hashCode = storedHashCode
 }
 
@@ -480,7 +482,7 @@ case class GCStoreAlt[Addr : Address, Abs : JoinLattice]
   }
 
   def collect(roots: Set[Addr]): GCStoreAlt[Addr,Abs] = {
-    val marked = roots.foldLeft(Set[Addr]())((acc,ref) => mark(ref,acc))
+    val marked = roots.foldLeft(Set[Addr]())((acc, ref) => mark(ref, acc))
     sweep(marked)
   }
 
@@ -503,11 +505,11 @@ case class GCStoreAlt[Addr : Address, Abs : JoinLattice]
   /* PERFORMANCE OPTIMIZATION */
 
   override def equals(that: Any): Boolean = that match {
-    case store: GCStoreAlt[Addr,Abs] => this.content == store.content
+    case store: GCStoreAlt[Addr,Abs] => this.storedHashCode == store.storedHashCode && this.content == store.content
     case _ => false
   }
 
-  lazy val storedHashCode = content.hashCode
+  val storedHashCode = content.hashCode
   override def hashCode = storedHashCode
 }
 
