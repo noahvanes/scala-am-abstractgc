@@ -1,58 +1,25 @@
-Abstract Machine Experiments with Scala
-* Goal
-The goal of this artefact is to experiment with abstract machines and language
-semantics. Scala-AM is initially based on the theoretical framework of
-Abstracting Abstract Machines (see references).
+* About Scala-AM
 
-To see how the framework can be used to build static analyses or define language
-semantics, look at =src/main/scala/LambdaCalculus.scala=.
-* Architecture
-To find out about the architecture of the implementation, look at the comments
-on the top of Main.scala (=src/main/scala/Main.scala=). They will bring you to
-other parts of the code that are worth seeing.
-
-When doing modification to the source code, you can run the test suite to test
-your changes by running =sbt test=. It should take a few minutes to run
-everything and will report which tests are failing if there are any.
-* Usage
-Use sbt to launch the program. Once sbt is launched and has installed the
-dependencies, you can perform the following:
-
-#+BEGIN_SRC sh
-run -h # Shows the possible options
-run -f test/fact.scm # Performs abstract interpretation on fact.scm
-run -f test/fact.scm -l Concrete -c # Performs concrete interpretation on fact.scm
-run -f test/fact.scm -m AAM # Use the AAM approach (default one is Free)
-run -f test/fact.scm -m AAC # Use the AAC approach
-run -f test/fact.scm -m AAM -d fact.dot # Output the state graph in fact.dot
-run # Launches a REPL that performs interpretation of the input
-#+END_SRC
-
-* Benchmarks
-Some benchmarks are included, in multiple benchmark suites. Look at
-=src/main/Benchmarks.scala= for the benchmark suites. You can run them as
-follows, for the suite =SimpleBenchmarks=:
-
-#+BEGIN_SRC
-run-main SimpleBenchmarks -w 2 -t 2min
-#+END_SRC
-
-You can give a timeout parameter (=-t=, no timeout by default), and a number of
-workers threads to distribute the work(=-w=, 1 by default).
-* Test suite
-The test suite can be run using =sbt test=
-* References and Relevant publications
-The idea behind Scala-AM comes from the AAM paper (Van Horn, David, and Matthew
-Might. "Abstracting abstract machines." ACM Sigplan
-Notices. Vol. 45. No. 9. ACM, 2010), and we have support for other machine
-abstractions: AAC (Johnson, James Ian, and David Van Horn. "Abstracting
-abstract control." ACM SIGPLAN Notices 50.2 (2015): 11-22), P4F (Gilray,
-Thomas, et al. "Pushdown control-flow analysis for free." ACM SIGPLAN
-Notices. Vol. 51. No. 1. ACM, 2016), and a concurrent version of AAM (Might,
-Matthew, and David Van Horn. "A family of abstract interpretations for static
-analysis of concurrent higher-order programs." International Static Analysis
-Symposium. Springer Berlin Heidelberg, 2011).
-
-This framework is described in the following publication:
+The goal of the Scala-AM framework is to experiment with abstract machines and language semantics.
+Scala-AM is initially based on the theoretical framework of Abstracting Abstract Machines (Van Horn & Might, 2010).
+For more information on the framework, look [[https://github.com/acieroid/scala-am][here]] or consult the following publications:
   - Scala-AM: A Modular Static Analysis Framework, SCAM 2016, [[http://soft.vub.ac.be/Publications/2016/vub-soft-tr-16-07.pdf][pdf]], [[https://zenodo.org/badge/latestdoi/23603/acieroid/scala-am][doi]].
   - Building a Modular Static Analysis Framework in Scala, [[http://soft.vub.ac.be/Publications/2016/vub-soft-tr-16-13.pdf][pdf]].
+  - Mailbox abstractions for static analysis of actor programs, ECOOP 2017,  [[http://drops.dagstuhl.de/opus/volltexte/2017/7254/pdf/LIPIcs-ECOOP-2017-25.pdf][pdf]].
+
+* Abstract Reference Counting
+
+This fork extends Scala-AM with a proof-of-concept implementation of abstract reference counting.
+Currently, this implementation is provided as a separate machine abstraction in =src/main/scala/machine/AAMRefCounting.scala= (or =src/main/scala/machine/AAMRefCountingVanilla.scala= for an implementation without cycle detection).
+As such -- thanks to the modularity of Scala-AM -- it can be directly configured with various context-sensitivities (e.g. the k-CFA family) and abstract domains (e.g. using a typelattice or a lattice in the k-points-to family). 
+
+In addition, implementations are provided of "traditional" abstract garbage collection using tracing GC in =src/main/scala/machine/AAMGC.scala= (which applies abstract GC at every transition) and =src/main/scala/machine/AAMGCAlt.scala= (which applies abstract GC at every join in the store).
+
+Note that, at this point, all our machine abstractions only support a limited subset of Scheme, as the input expression first needs to be preprocessed to compute free variables and to inline references to primitives, which is beneficial to the efficiency of abstract garbage collection.
+
+For more information on abstract garbage collection, consult the following publication:
+- Might, M., & Shivers, O. (2006, September). Improving flow analyses via ΓCFA: Abstract garbage collection and counting. In ACM SIGPLAN Notices (Vol. 41, No. 9, pp. 13-25). ACM, [[https://scholar.google.be/scholar?output=instlink&q=info:B5edOVcrE-4J:scholar.google.com/&hl=en&as_sdt=0,5&scillfp=5544457856398583264&oi=lle][pdf]].
+
+* Benchmarks
+
+The benchmarks found in our ECOOP'19 submission can be run by launching =src/main/scala/machine/Main.scala= using sbt, which outputs the results to a CSV-file in the top-level folder =output=.
