@@ -65,11 +65,13 @@ case class GCKontStore[Addr : Address, KontAddr : KontAddress](content: Map[Kont
     })
 
   def collect(root: KontAddr): (GCKontStore[Addr,KontAddr],Set[Addr]) = {
-    val (marked, addrs) = mark(root, Set(), Set())
-    val updatedContent = content.filterKeysStrict(marked)
-    val updatedRefs = refs.filterKeysStrict(marked).withDefaultValue(Set())
-    val updatedVRefs = vrefs.filterKeysStrict(marked).withDefaultValue(Set())
-    (GCKontStore(updatedContent, updatedRefs, updatedVRefs), addrs)
+    Main.timeGC {
+      val (marked, addrs) = mark(root, Set(), Set())
+      val updatedContent = content.filterKeysStrict(marked)
+      val updatedRefs = refs.filterKeysStrict(marked).withDefaultValue(Set())
+      val updatedVRefs = vrefs.filterKeysStrict(marked).withDefaultValue(Set())
+      (GCKontStore(updatedContent, updatedRefs, updatedVRefs), addrs)
+    }
   }
 
   def keys = content.keys
@@ -113,11 +115,13 @@ case class GCKontStoreAlt[Addr : Address, KontAddr : KontAddress](content: Map[K
     })
 
   def collect(root: KontAddr): (GCKontStoreAlt[Addr,KontAddr],Set[Addr]) = {
-    val (marked, addrs) = mark(root, Set(), Set())
-    val updatedContent = content.filterKeysStrict(marked)
-    val updatedRefs = refs.filterKeysStrict(marked).withDefaultValue(Set())
-    val updatedVRefs = vrefs.filterKeysStrict(marked).withDefaultValue(Set())
-    (GCKontStoreAlt(updatedContent, updatedRefs, updatedVRefs, false), addrs)
+    Main.timeGC {
+      val (marked, addrs) = mark(root, Set(), Set())
+      val updatedContent = content.filterKeysStrict(marked)
+      val updatedRefs = refs.filterKeysStrict(marked).withDefaultValue(Set())
+      val updatedVRefs = vrefs.filterKeysStrict(marked).withDefaultValue(Set())
+      (GCKontStoreAlt(updatedContent, updatedRefs, updatedVRefs, false), addrs)
+    }
   }
 
   def keys = content.keys
@@ -164,34 +168,36 @@ case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress]
   extends KontStore[KontAddr] {
 
   def pop(newRoot: KontAddr): (RefCountingKontStore[Addr,KontAddr],Iterable[Addr]) = {
-    if (ds.equiv(root, newRoot)) {
-      (this.copy(root = newRoot), Iterable.empty)
-    } else {
-      var updatedContent = this.content
-      var updatedIn = this.in
-      var updatedHC = this.hc
-      var updatedDS = this.ds
-      var vdeleted = List[Addr]()
-      val toDealloc = scala.collection.mutable.Queue[KontAddr](this.root)
-      var marked = Set[KontAddr](this.root, newRoot) // do not touch the new root!
-      // we can show that oldRoot -> newRoot is the only
-      // transition between oldRootCls and newRootCls !
-      while (toDealloc.nonEmpty) {
-        val addr = toDealloc.dequeue
-        val (konts, kaddrs, vrefs) = this.content(addr)
-        konts foreach { kont => updatedHC = updatedHC - kont.hashCode() }
-        updatedContent = updatedContent - addr
-        updatedIn = updatedIn - addr
-        updatedDS = updatedDS - addr
-        vdeleted = vdeleted ++ vrefs
-        kaddrs.filterNot(marked) foreach { kaddr =>
-          marked = marked + kaddr
-          toDealloc.enqueue(kaddr)
+      Main.timeGC {
+        if (ds.equiv(root, newRoot)) {
+          (this.copy(root = newRoot), Iterable.empty)
+        } else {
+          var updatedContent = this.content
+          var updatedIn = this.in
+          var updatedHC = this.hc
+          var updatedDS = this.ds
+          var vdeleted = List[Addr]()
+          val toDealloc = scala.collection.mutable.Queue[KontAddr](this.root)
+          var marked = Set[KontAddr](this.root, newRoot) // do not touch the new root!
+          // we can show that oldRoot -> newRoot is the only
+          // transition between oldRootCls and newRootCls !
+          while (toDealloc.nonEmpty) {
+            val addr = toDealloc.dequeue
+            val (konts, kaddrs, vrefs) = this.content(addr)
+            konts foreach { kont => updatedHC = updatedHC - kont.hashCode() }
+            updatedContent = updatedContent - addr
+            updatedIn = updatedIn - addr
+            updatedDS = updatedDS - addr
+            vdeleted = vdeleted ++ vrefs
+            kaddrs.filterNot(marked) foreach { kaddr =>
+              marked = marked + kaddr
+              toDealloc.enqueue(kaddr)
+            }
+          }
+          val updatedKStore = RefCountingKontStore(newRoot, updatedContent, updatedIn, updatedDS, updatedHC)
+          (updatedKStore, vdeleted)
         }
       }
-      val updatedKStore = RefCountingKontStore(newRoot, updatedContent, updatedIn, updatedDS, updatedHC)
-      (updatedKStore, vdeleted)
-    }
   }
 
   def keys = content.keys
@@ -206,7 +212,7 @@ case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress]
       case None =>
         val kontRefs = kont.frame.references
         val updatedContent = content + (adr -> (Set(kont), Set(kont.next), kontRefs))
-        val updatedIn = in + (ds.find(kont.next) -> adr)
+        val updatedIn = Main.timeGC { in + (ds.find(kont.next) -> adr) }
         val updatedHC = hc + kont.hashCode()
         val updatedKstore = this.copy(root = adr, content = updatedContent, in = updatedIn, hc = updatedHC)
         (updatedKstore, kontRefs)
@@ -217,7 +223,7 @@ case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress]
         val (updatedIn, updatedKaddrs, updatedDS) = if (kaddrs.contains(kont.next)) {
           (in, kaddrs, ds)
         } else {
-          val updatedDS = detectCycle(adr, ds)
+          val updatedDS = Main.timeGC { detectCycle(adr, ds) }
           val updatedIn = in - updatedDS.find(adr)
           val updatedKaddrs = kaddrs + kont.next
           (updatedIn, updatedKaddrs, updatedDS)
@@ -371,18 +377,20 @@ case class RefCountingKontStoreVanilla[Addr : Address, KontAddr : KontAddress]
   }
 
   def pop(newRoot: KontAddr): (RefCountingKontStoreVanilla[Addr,KontAddr],Iterable[Addr]) = {
-    val toDelete = scala.collection.mutable.Queue[KontAddr]()
-    val toDealloc = scala.collection.mutable.Queue[KontAddr]()
-    if (in(root).isEmpty && root != newRoot) {
-      toDealloc.enqueue(root)
+    Main.timeGC {
+      val toDelete = scala.collection.mutable.Queue[KontAddr]()
+      val toDealloc = scala.collection.mutable.Queue[KontAddr]()
+      if (in(root).isEmpty && root != newRoot) {
+        toDealloc.enqueue(root)
+      }
+      var updatedIn: AddrCount = in
+      while (toDealloc.nonEmpty) {
+        updatedIn = dealloc(toDealloc.dequeue, updatedIn, newRoot, toDealloc, toDelete)
+      }
+      val updatedHc = toDelete.foldLeft(this.hc)((acc, ref) => content(ref)._1.foldLeft(acc)((acc2, kont) => acc2 - kont.hashCode()))
+      val deletedAddr = toDelete.foldLeft(Set[Addr]())((acc, ref) => acc ++ content(ref)._3)
+      (RefCountingKontStoreVanilla(newRoot, content -- toDelete, updatedIn -- toDelete, updatedHc), deletedAddr)
     }
-    var updatedIn: AddrCount = in
-    while (toDealloc.nonEmpty) {
-      updatedIn = dealloc(toDealloc.dequeue, updatedIn, newRoot, toDealloc, toDelete)
-    }
-    val updatedHc = toDelete.foldLeft(this.hc)((acc, ref) => content(ref)._1.foldLeft(acc)((acc2, kont) => acc2 - kont.hashCode()))
-    val deletedAddr = toDelete.foldLeft(Set[Addr]())((acc, ref) => acc ++ content(ref)._3)
-    (RefCountingKontStoreVanilla(newRoot, content -- toDelete, updatedIn -- toDelete, updatedHc), deletedAddr)
   }
 
   def keys = content.keys
@@ -397,7 +405,7 @@ case class RefCountingKontStoreVanilla[Addr : Address, KontAddr : KontAddress]
       case None =>
         val kontRefs = kont.frame.references
         val updatedContent = content + (adr -> (Set(kont), Set(kont.next), kontRefs))
-        val updatedIn = in + (kont.next -> (in(kont.next) + adr))
+        val updatedIn = Main.timeGC { in + (kont.next -> (in(kont.next) + adr)) }
         val updatedHC = hc + kont.hashCode()
         val updatedKstore = this.copy(root = adr, content = updatedContent, in = updatedIn, hc = updatedHC)
         (updatedKstore, kontRefs)
@@ -408,7 +416,7 @@ case class RefCountingKontStoreVanilla[Addr : Address, KontAddr : KontAddress]
         val (updatedIn, updatedKaddrs) = if (kaddrs.contains(kont.next)) {
           (in, kaddrs)
         } else {
-          val updatedIn = in + (kont.next -> (in(kont.next) + adr))
+          val updatedIn = Main.timeGC { in + (kont.next -> (in(kont.next) + adr)) }
           val updatedKaddrs = kaddrs + kont.next
           (updatedIn, updatedKaddrs)
         }

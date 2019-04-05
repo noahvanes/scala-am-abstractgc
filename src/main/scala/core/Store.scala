@@ -95,7 +95,7 @@ extends Store[Addr,Abs] {
   }
 
   def incRefs(addrs: Iterable[Addr]): RefCountingStore[Addr,Abs] =
-    this.copy(in = addrs.foldLeft(in)((acc,ref) => incRootRef(ref,acc,this.ds)))
+    Main.timeGC { this.copy(in = addrs.foldLeft(in)((acc,ref) => incRootRef(ref,acc,this.ds))) }
 
   private def deallocRef(update: AddrRefs => AddrRefs, to: Addr, currentIn: AddrCount, toDealloc: AddrQueue): AddrCount = {
     val cls = ds.find(to)
@@ -146,25 +146,28 @@ extends Store[Addr,Abs] {
 
   def decRefs(addrs: Iterable[Addr]): RefCountingStore[Addr,Abs] = {
 
-    val toDelete = scala.collection.mutable.Queue[Addr]()
-    val toDealloc = scala.collection.mutable.Queue[Addr]()
-    val deallocated = scala.collection.mutable.Set[Addr]()
+    Main.timeGC {
 
-    // For every addr in addrs:
-    // - decrement the reference count of the corresponding scc
-    // - if the SCC can be deallocated, enqueue it in toDealloc
-    var updatedIn = addrs.foldLeft(this.in)((acc, ref) => deallocRootRef(ref, acc, toDealloc))
+      val toDelete = scala.collection.mutable.Queue[Addr]()
+      val toDealloc = scala.collection.mutable.Queue[Addr]()
+      val deallocated = scala.collection.mutable.Set[Addr]()
 
-      // Deallocate a SCC in every iteration
-      while (toDealloc.nonEmpty) {
-        val cls = toDealloc.dequeue
-        if (deallocated.add(cls)) {
-          updatedIn = deallocSCC(cls, updatedIn, toDealloc, toDelete)
+      // For every addr in addrs:
+      // - decrement the reference count of the corresponding scc
+      // - if the SCC can be deallocated, enqueue it in toDealloc
+      var updatedIn = addrs.foldLeft(this.in)((acc, ref) => deallocRootRef(ref, acc, toDealloc))
+
+        // Deallocate a SCC in every iteration
+        while (toDealloc.nonEmpty) {
+          val cls = toDealloc.dequeue
+          if (deallocated.add(cls)) {
+            updatedIn = deallocSCC(cls, updatedIn, toDealloc, toDelete)
+          }
         }
-      }
 
-    val updatedHc = toDelete.foldLeft(this.hc)((acc, ref) => acc - content(ref)._1.hashCode())
-    RefCountingStore(content -- toDelete, updatedIn -- toDelete, ds -- toDelete, updatedHc)
+      val updatedHc = toDelete.foldLeft(this.hc)((acc, ref) => acc - content(ref)._1.hashCode())
+      RefCountingStore(content -- toDelete, updatedIn -- toDelete, ds -- toDelete, updatedHc)
+    }
   }
 
   def extend(adr: Addr, v: Abs): RefCountingStore[Addr,Abs] = content.get(adr) match {
@@ -172,7 +175,7 @@ extends Store[Addr,Abs] {
         val vrefs = JoinLattice[Abs].references(v)
         val updatedContent = this.content + (adr -> (v, vrefs))
         val updatedIn = vrefs.foldLeft(this.in)((acc, ref) => {
-          if (ref == adr) { acc } else { incEdgeRef(adr, ref, acc, this.ds) }
+          if (ref == adr) { acc } else { Main.timeGC { incEdgeRef(adr, ref, acc, this.ds) } }
         })
         val updatedHc = this.hc + v.hashCode()
         this.copy(content = updatedContent, in = updatedIn, hc = updatedHc)
@@ -183,7 +186,7 @@ extends Store[Addr,Abs] {
         val updatedVal = JoinLattice[Abs].join(u, v)
         val updatedHc = this.hc - u.hashCode() + updatedVal.hashCode()
         val ((updatedDs, updatedIn), updatedRefs) = vrefs.foldLeft(((this.ds, this.in), urefs))((acc, ref) => {
-          if (urefs.contains(ref)) { acc } else { (detectCycle(adr, ref, acc._1), acc._2 + ref) }
+          if (urefs.contains(ref)) { acc } else { ( Main.timeGC { detectCycle(adr, ref, acc._1) }, acc._2 + ref) }
         })
         val updatedContent = this.content + (adr -> (updatedVal, updatedRefs))
         RefCountingStore(updatedContent, updatedIn, updatedDs, updatedHc)
@@ -315,12 +318,14 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
   }
 
   private def incEdgeRef(from: Addr, to: Addr, currentIn: AddrCount) = {
+    Main.timeGC {
       val (counts, refs) = currentIn(to)
       currentIn + (to -> (counts, refs + from))
+    }
   }
 
   def incRefs(addrs: Iterable[Addr]): RefCountingStoreVanilla[Addr,Abs] =
-    this.copy(in = addrs.foldLeft(in)((acc,ref) => incRootRef(ref,acc)))
+    Main.timeGC { this.copy(in = addrs.foldLeft(in)((acc,ref) => incRootRef(ref,acc))) }
 
   private def deallocRef(update: AddrRefs => AddrRefs, to: Addr, currentIn: AddrCount, toDealloc: AddrQueue): AddrCount = {
     val current = currentIn(to)
@@ -347,14 +352,16 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
   }
 
   def decRefs(addrs: Iterable[Addr]): RefCountingStoreVanilla[Addr,Abs] = {
-    val toDelete = scala.collection.mutable.Queue[Addr]()
-    val toDealloc = scala.collection.mutable.Queue[Addr]()
-    var updatedIn = addrs.foldLeft(this.in)((acc, ref) => deallocRootRef(ref, acc, toDealloc))
-    while (toDealloc.nonEmpty) {
-      updatedIn = dealloc(toDealloc.dequeue, updatedIn, toDealloc, toDelete)
+    Main.timeGC {
+      val toDelete = scala.collection.mutable.Queue[Addr]()
+      val toDealloc = scala.collection.mutable.Queue[Addr]()
+      var updatedIn = addrs.foldLeft(this.in)((acc, ref) => deallocRootRef(ref, acc, toDealloc))
+      while (toDealloc.nonEmpty) {
+        updatedIn = dealloc(toDealloc.dequeue, updatedIn, toDealloc, toDelete)
+      }
+      val updatedHc = toDelete.foldLeft(this.hc)((acc, ref) => acc - content(ref)._1.hashCode())
+      RefCountingStoreVanilla(content -- toDelete, updatedIn -- toDelete, updatedHc)
     }
-    val updatedHc = toDelete.foldLeft(this.hc)((acc, ref) => acc - content(ref)._1.hashCode())
-    RefCountingStoreVanilla(content -- toDelete, updatedIn -- toDelete, updatedHc)
   }
 
   def extend(adr: Addr, v: Abs): RefCountingStoreVanilla[Addr,Abs] = content.get(adr) match {
@@ -426,8 +433,10 @@ case class GCStore[Addr : Address, Abs : JoinLattice]
     }
 
     def collect(roots: Set[Addr]): GCStore[Addr,Abs] = {
-      val marked = roots.foldLeft(Set[Addr]())((acc, ref) => mark(ref, acc))
-      sweep(marked)
+      Main.timeGC {
+        val marked = roots.foldLeft(Set[Addr]())((acc, ref) => mark(ref, acc))
+        sweep(marked)
+      }
     }
 
     def extend(adr: Addr, v: Abs) = {
@@ -482,8 +491,10 @@ case class GCStoreAlt[Addr : Address, Abs : JoinLattice]
   }
 
   def collect(roots: Set[Addr]): GCStoreAlt[Addr,Abs] = {
-    val marked = roots.foldLeft(Set[Addr]())((acc, ref) => mark(ref, acc))
-    sweep(marked)
+    Main.timeGC {
+      val marked = roots.foldLeft(Set[Addr]())((acc, ref) => mark(ref, acc))
+      sweep(marked)
+    }
   }
 
   def extend(adr: Addr, v: Abs) = {

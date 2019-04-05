@@ -19,8 +19,8 @@ object Main {
   private val OUTPUT_FILE   = "overhead-benchmarks"   // the name of the output file (which will be exported in CSV format)
 
   // configure benchmark parameters
-  private val MAX_WARMUP_RUNS    = 100    // maximum number of warmup runs per benchmark program
-  private val MAX_WARMUP_TIME    = 120    // maximum total time spent on warmup (in seconds) per benchmark program
+  private val MAX_WARMUP_RUNS    = 30     // maximum number of warmup runs per benchmark program
+  private val MAX_WARMUP_TIME    = 60     // maximum total time spent on warmup (in seconds) per benchmark program
   private val NUMBER_OF_TRIALS   = 30     // number of trials/measurements per benchmark program
   private val MAX_TIME_PER_TRIAL = 60     // timeout per trial (in seconds)
                                           // NOTE: as memory usage increases throughout a trial, higher values of MAX_TIME_PER_TRIAL might cause out-of-memory exceptions
@@ -40,7 +40,7 @@ object Main {
   // configure which abstract interpreters / machines to compare in the benchmarks
   private val ABSTRACT_MACHINES = List(
   //  machineAAM,                 // uncomment to include an abstract interpreter without abstract GC (i.e., \rightarrow in the paper)
-    machineAAMGC,               // uncomment to include an abstract interpreter with abstract tracing GC at every step (i.e., \rightarrow_{\Gamma} in the paper)
+  //  machineAAMGC,               // uncomment to include an abstract interpreter with abstract tracing GC at every step (i.e., \rightarrow_{\Gamma} in the paper)
   //  machineAAMGC_gammaCFA,      // uncomment to include an abstract interpreter which performs abstract tracing GC at every join operation in the store (i.e., \rightarrow_{\GammaCFA} in the paper)
   //  machineAAMARC,              // uncomment to include an abstract interpreter which performs abstract reference counting without cycle detection (i.e., \rightarrow_{arc} in the paper)
   //  machineAAMARCplus,          // uncomment to include an abstract interpreter which performs abstract reference counting with only cycle detection in the kontinuation store (i.e., \rightarrow_{arc+} in the paper)
@@ -66,11 +66,6 @@ object Main {
     //gcipd,
     nqueens
   )
-
-  // configure whether a graph should be generated or not
-  // (NOTE: to avoid the impact of graph construction on performance, the graph will be generated after the actual benchmark measurements)
-  private val OUTPUT_GRAPH = false    // by default, generating graphs is turned off
-  //private val OUTPUT_GRAPH = true   // uncomment to generate a graph (which will be exported as `graph.dot` in the output folder)
 
   /* -- SUPPORTING DEFINITIONS -- */
 
@@ -122,6 +117,16 @@ object Main {
 
   /* -- BENCHMARKING -- */
 
+  // used to register time spent on GC
+  private var GC_TIME: Long = 0
+  def timeGC[A](block: => A): A = {
+    val t0 = System.nanoTime()
+    val res = block
+    val t1 = System.nanoTime()
+    Main.GC_TIME = Main.GC_TIME + (t1 - t0)
+    res
+  }
+
   // auxiliary definitions
   private type Machine = AbstractMachine[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
   private implicit def isSchemeLattice: IsSchemeLattice[ABSTRACT_DOMAIN.L] = ABSTRACT_DOMAIN.isSchemeLattice
@@ -145,7 +150,7 @@ object Main {
   }
 
   // format for benchmark results
-  case class BenchmarkResult(id: String, numberOfStates: Long, time: Option[Long])
+  case class BenchmarkResult(id: String, mean: Double, stddev: Double)
 
   // benchmarking function
   private def runBenchmark(benchmark: Benchmark, machine: Machine): BenchmarkResult = {
@@ -157,37 +162,25 @@ object Main {
     val warmupTimeout = Timeout.start(Duration(MAX_WARMUP_TIME,"seconds"))
     while (warmupRun < MAX_WARMUP_RUNS && !warmupTimeout.reached) {
       print(".")
+      GC_TIME = 0
       machine.eval(program,sem,false,warmupTimeout)
       warmupRun = warmupRun + 1
     }
     // actual measurements
     var trial = 0
-    var numberOfStates = 0
-    var measurements = List[Long]()
+    var overheads = List[Double]()
     while (trial < NUMBER_OF_TRIALS) {
       print("*")
-      val t0 = System.nanoTime()
+      GC_TIME = 0
       val result = machine.eval(program,sem,false,Timeout.start(Duration(MAX_TIME_PER_TRIAL,"seconds")))
-      val t1 = System.nanoTime()
-      val elapsed = (t1 - t0) / 1000000   // convert ns into ms
-
-      if (result.timedOut) {      // assumption: if a benchmark times out once, it will timeout again
-        println(s"\n=> TIMEOUT | STATES: ${result.numberOfStates}")
-        return BenchmarkResult(name,result.numberOfStates,None)
-      }
-      measurements = elapsed :: measurements
-      numberOfStates = result.numberOfStates
+      overheads = (GC_TIME:Double)/(result.numberOfStates:Double) :: overheads
       trial = trial + 1
     }
-    // optional: export a state graph
-    if (OUTPUT_GRAPH) {
-      val result = machine.eval(program,sem,true,Timeout.start(Duration(MAX_TIME_PER_TRIAL,"seconds")))
-      result.toFile(s"$OUTPUT_DIR/graph.dot")(GraphDOTOutput)
-    }
-    // benchmark result
-    val mean = measurements.sum / measurements.size
-    println(s"\n=> TIME: $mean | STATES: $numberOfStates")
-    BenchmarkResult(name,numberOfStates,Some(mean))
+    // compute the benchmark result
+    val mean = (overheads.sum:Double) / (overheads.size:Double)
+    val stddev = Math.sqrt((overheads.map(r=>Math.pow(r-mean,2)).sum:Double)/((overheads.size-1):Double))
+    println(s"\n=> MEAN: $mean | STDDEV: $stddev")
+    BenchmarkResult(name,mean,stddev)
   }
 
   private def runBenchmarks(benchmarks: List[Benchmark], machines: List[Machine]): List[BenchmarkResult]
@@ -197,12 +190,9 @@ object Main {
     val outputPath = s"$OUTPUT_DIR/$filename.csv"
     val outputFile = new BufferedWriter(new FileWriter(outputPath))
     val csvWriter = new CSVWriter(outputFile)
-    var csvContents = List(Array("benchmark", "numberOfStates", "time"))
+    var csvContents = List(Array("benchmark", "mean", "std"))
     results foreach { result =>
-      val name = result.id
-      val numberOfStates = result.numberOfStates.toString
-      val time = if (result.time.isDefined) { result.time.get.toString } else { "timeout" }
-      csvContents = Array(name, numberOfStates, time) :: csvContents
+      csvContents = Array(result.id, result.mean.toString, result.stddev.toString) :: csvContents
     }
     csvWriter.writeAll(csvContents.reverse)
     csvWriter.close()
