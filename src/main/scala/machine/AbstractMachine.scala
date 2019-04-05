@@ -148,6 +148,6 @@ abstract class EvalKontMachine[Exp : Expression, Abs : JoinLattice, Addr : Addre
   case class ControlError(err: SemanticError) extends Control {
     override def toString = s"${err}"
     def subsumes(that: Control) = that.equals(this)
-    val references = Set()
+    val references = Set[Addr]()
   }
 }
