@@ -13,9 +13,7 @@ object Main {
 
   /* -- CONFIGURATION -- */
 
-  // configure input/output locations for benchmarks
-  private val BENCHMARK_DIR = "benchmarks"            // the root folder where the source code for the benchmarks can be found
-  private val OUTPUT_DIR    = "output"                // the root folder where the benchmark results are exported
+  // configure output options for benchmarks
   private val OUTPUT_FILE   = "overhead-benchmarks"   // the name of the output file (which will be exported in CSV format)
 
   // configure benchmark parameters
@@ -61,9 +59,9 @@ object Main {
     // takl,
     // triangl,
     // primtest,
-    //collatz,
-    //rsa,
-    //gcipd,
+    // collatz,
+    // rsa,
+    // gcipd,
     nqueens
   )
 
@@ -114,6 +112,11 @@ object Main {
   private def rsa      = loadScalaAMBenchmark("rsa")
   private def gcipd    = loadScalaAMBenchmark("gcipd")
   private def nqueens  = loadScalaAMBenchmark("nqueens")
+
+  /* -- PRE-CONFIGURED (should probably not be changed) -- */
+
+  private val BENCHMARK_DIR = "benchmarks"            // the root folder where the source code for the benchmarks can be found
+  private val OUTPUT_DIR    = "output"                // the root folder where the benchmark results are exported
 
   /* -- BENCHMARKING -- */
 
