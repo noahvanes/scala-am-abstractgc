@@ -13,10 +13,10 @@ object Main {
 
   /* -- CONFIGURATION -- */
 
-  // configure input/output locations for benchmarks
-  private val BENCHMARK_DIR = "benchmarks"            // the root folder where the source code for the benchmarks can be found
-  private val OUTPUT_DIR    = "output"                // the root folder where the benchmark results are exported
-  private val OUTPUT_FILE   = "overhead-benchmarks"   // the name of the output file (which will be exported in CSV format)
+  // configure output options for benchmarks
+  private val OUTPUT_FILE   = "main-benchmarks"   // the name of the output file (which will be exported in CSV format)
+  private val OUTPUT_GRAPH  = false               // change to true to generate an output graph (automatically exported as a dot-file to output/graph.dot)
+                                                  // (NOTE: to avoid the impact of graph construction on performance, the graph will be generated after the actual benchmark measurements)
 
   // configure benchmark parameters
   private val MAX_WARMUP_RUNS    = 100    // maximum number of warmup runs per benchmark program
@@ -40,7 +40,7 @@ object Main {
   // configure which abstract interpreters / machines to compare in the benchmarks
   private val ABSTRACT_MACHINES = List(
   //  machineAAM,                 // uncomment to include an abstract interpreter without abstract GC (i.e., \rightarrow in the paper)
-    machineAAMGC,               // uncomment to include an abstract interpreter with abstract tracing GC at every step (i.e., \rightarrow_{\Gamma} in the paper)
+  //  machineAAMGC,               // uncomment to include an abstract interpreter with abstract tracing GC at every step (i.e., \rightarrow_{\Gamma} in the paper)
   //  machineAAMGC_gammaCFA,      // uncomment to include an abstract interpreter which performs abstract tracing GC at every join operation in the store (i.e., \rightarrow_{\GammaCFA} in the paper)
   //  machineAAMARC,              // uncomment to include an abstract interpreter which performs abstract reference counting without cycle detection (i.e., \rightarrow_{arc} in the paper)
   //  machineAAMARCplus,          // uncomment to include an abstract interpreter which performs abstract reference counting with only cycle detection in the kontinuation store (i.e., \rightarrow_{arc+} in the paper)
@@ -61,16 +61,11 @@ object Main {
     // takl,
     // triangl,
     // primtest,
-    //collatz,
-    //rsa,
-    //gcipd,
+    // collatz,
+    // rsa,
+    // gcipd,
     nqueens
   )
-
-  // configure whether a graph should be generated or not
-  // (NOTE: to avoid the impact of graph construction on performance, the graph will be generated after the actual benchmark measurements)
-  private val OUTPUT_GRAPH = false    // by default, generating graphs is turned off
-  //private val OUTPUT_GRAPH = true   // uncomment to generate a graph (which will be exported as `graph.dot` in the output folder)
 
   /* -- SUPPORTING DEFINITIONS -- */
 
@@ -119,6 +114,11 @@ object Main {
   private def rsa      = loadScalaAMBenchmark("rsa")
   private def gcipd    = loadScalaAMBenchmark("gcipd")
   private def nqueens  = loadScalaAMBenchmark("nqueens")
+
+  /* -- PRE-CONFIGURED (should probably not be changed) -- */
+
+  private val BENCHMARK_DIR = "benchmarks"            // the root folder where the source code for the benchmarks can be found
+  private val OUTPUT_DIR    = "output"                // the root folder where the benchmark results are exported
 
   /* -- BENCHMARKING -- */
 
