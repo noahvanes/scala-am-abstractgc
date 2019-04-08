@@ -14,9 +14,10 @@ object Main {
   /* -- CONFIGURATION -- */
 
   // configure output options for benchmarks
-  private val OUTPUT_FILE   = "main-benchmarks"   // the name of the output file (which will be exported in CSV format)
-  private val OUTPUT_GRAPH  = false               // change to true to generate an output graph (automatically exported as a dot-file to output/graph.dot)
-                                                  // (NOTE: to avoid the impact of graph construction on performance, the graph will be generated after the actual benchmark measurements)
+  private val OUTPUT_FILE   = "main-benchmarks"       // the name of the output file (which will be exported in CSV format)
+  private val OUTPUT_GRAPH  = None                    // by default, no graph is generated
+  // private val OUTPUT_GRAPH  = Some("graph-name")   // uncomment to generate an output graph (automatically exported as a dot-file to output/<graph-name>.dot)
+                                                      // (NOTE: to avoid the impact of graph construction on performance, the graph will be generated after the actual benchmark measurements)
 
   // configure benchmark parameters
   private val MAX_WARMUP_RUNS    = 100    // maximum number of warmup runs per benchmark program
@@ -180,9 +181,9 @@ object Main {
       trial = trial + 1
     }
     // optional: export a state graph
-    if (OUTPUT_GRAPH) {
+    if (OUTPUT_GRAPH.isDefined) {
       val result = machine.eval(program,sem,true,Timeout.start(Duration(MAX_TIME_PER_TRIAL,"seconds")))
-      result.toFile(s"$OUTPUT_DIR/graph.dot")(GraphDOTOutput)
+      result.toFile(s"$OUTPUT_DIR/${OUTPUT_GRAPH.get}.dot")(GraphDOTOutput)
     }
     // benchmark result
     val mean = measurements.sum / measurements.size
