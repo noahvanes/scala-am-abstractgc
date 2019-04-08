@@ -183,7 +183,7 @@ object Main {
     // optional: export a state graph
     if (OUTPUT_GRAPH.isDefined) {
       val result = machine.eval(program,sem,true,Timeout.start(Duration(MAX_TIME_PER_TRIAL,"seconds")))
-      result.toFile(s"$OUTPUT_DIR/${OUTPUT_GRAPH.get}.dot")(GraphDOTOutput)
+      result.toFile(s"$OUTPUT_DIR/${OUTPUT_GRAPH.get}-$name.dot")(GraphDOTOutput)
     }
     // benchmark result
     val mean = measurements.sum / measurements.size
