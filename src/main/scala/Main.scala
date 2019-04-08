@@ -15,6 +15,10 @@ object Main {
 
   // configure output options for benchmarks
   private val OUTPUT_FILE   = "overhead-benchmarks"   // the name of the output file (which will be exported in CSV format)
+  private val OUTPUT_GRAPH  = None                    // by default, no graph is generated
+  // private val OUTPUT_GRAPH  = Some("graph-name")   // uncomment to generate an output graph (automatically exported as a dot-file to output/<graph-name>.dot)
+                                                      // (NOTE: to avoid the impact of graph construction on performance, the graph will be generated after the actual benchmark measurements)
+
 
   // configure benchmark parameters
   private val MAX_WARMUP_RUNS    = 30     // maximum number of warmup runs per benchmark program
@@ -178,6 +182,11 @@ object Main {
       val result = machine.eval(program,sem,false,Timeout.start(Duration(MAX_TIME_PER_TRIAL,"seconds")))
       overheads = (GC_TIME:Double)/(result.numberOfStates:Double) :: overheads
       trial = trial + 1
+    }
+    // optional: export a state graph
+    if (OUTPUT_GRAPH.isDefined) {
+      val result = machine.eval(program,sem,true,Timeout.start(Duration(MAX_TIME_PER_TRIAL,"seconds")))
+      result.toFile(s"$OUTPUT_DIR/${OUTPUT_GRAPH.get}-$name.dot")(GraphDOTOutput)
     }
     // compute the benchmark result
     val mean = (overheads.sum:Double) / (overheads.size:Double)
