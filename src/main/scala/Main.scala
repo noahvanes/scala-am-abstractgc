@@ -118,8 +118,8 @@ object Main {
 
   /* -- PRE-CONFIGURED (should probably not be changed) -- */
 
-  private val BENCHMARK_DIR = "benchmarks"            // the root folder where the source code for the benchmarks can be found
-  private val OUTPUT_DIR    = "output"                // the root folder where the benchmark results are exported
+  private def BENCHMARK_DIR = "benchmarks"            // the root folder where the source code for the benchmarks can be found
+  private def OUTPUT_DIR    = "output"                // the root folder where the benchmark results are exported
 
   /* -- BENCHMARKING -- */
 
