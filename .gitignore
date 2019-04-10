@@ -2,6 +2,7 @@
 /.ensime
 /TODO.org
 /project/
+/output/*
 /target/
 .ensime_cache
 *.dot
