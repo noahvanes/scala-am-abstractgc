@@ -20,6 +20,6 @@ Note that, at this point, all our machine abstractions only support a limited su
 For more information on abstract garbage collection, consult the following publication:
 - Might, M., & Shivers, O. (2006, September). Improving flow analyses via ΓCFA: Abstract garbage collection and counting. In ACM SIGPLAN Notices (Vol. 41, No. 9, pp. 13-25). ACM, [[https://scholar.google.be/scholar?output=instlink&q=info:B5edOVcrE-4J:scholar.google.com/&hl=en&as_sdt=0,5&scillfp=5544457856398583264&oi=lle][pdf]].
 
-* Benchmarks
+* Experiments
 
-The benchmarks found in our ECOOP'19 submission can be run by launching =src/main/scala/machine/Main.scala= using sbt, which outputs the results to a CSV-file in the top-level folder =output=.
+This version of the framework has been set up in such a way that one can easily run a variety of experiments to evaluate and compare several approaches to abstract garbage collection. Specifically, one can configure and run =src/main/scala/Main.scala= to execute a set of benchmarks, which outputs the results to a CSV-file in the top-level folder =output=. Detailed instructions on how to run the experiments and reproduce the results found in our ECOOP'19 companion [[https://soft.vub.ac.be/~noahves/ecoop2019arc/ecooop2019arc.pdf][paper]] can be found [[https://soft.vub.ac.be/~noahves/ecoop2019arc/artifactInstructions.pdf][here]].
