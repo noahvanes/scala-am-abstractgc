@@ -386,7 +386,7 @@ class SchemePrimitives[Addr : Address, Abs : IsSchemeLattice] extends Primitives
     override def call(x: Abs, y: Abs) = stringRef(x,y)
   }
   object Newline extends NoStoreOperation("newline", Some(0)) {
-    override def call() = { println(""); MayFailSuccess(abs.inject(false)) }
+    override def call() = MayFailSuccess(abs.inject(false))
   }
   object Display extends NoStoreOperation("display", Some(1)) {
     override def call(x: Abs) = {
