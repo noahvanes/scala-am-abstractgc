@@ -43,7 +43,7 @@ object Main {
   private val ABSTRACT_MACHINES = List(
   //  machineAAM,                 // uncomment to include an abstract interpreter without abstract GC (i.e., \rightarrow in the paper)
   //  machineAAMGC,               // uncomment to include an abstract interpreter with abstract tracing GC at every step (i.e., \rightarrow_{\Gamma} in the paper)
-  //  machineAAMGC_gammaCFA,      // uncomment to include an abstract interpreter which performs abstract tracing GC at every join operation in the store (i.e., \rightarrow_{\GammaCFA} in the paper)
+  //  machineAAMGCAlt,            // uncomment to include an abstract interpreter which performs abstract tracing GC at every join operation in the store (i.e., \rightarrow_{\GammaCFA} in the paper)
   //  machineAAMARC,              // uncomment to include an abstract interpreter which performs abstract reference counting without cycle detection (i.e., \rightarrow_{arc} in the paper)
   //  machineAAMARCplus,          // uncomment to include an abstract interpreter which performs abstract reference counting with only cycle detection in the kontinuation store (i.e., \rightarrow_{arc+} in the paper)
     machineAAMARCplusplus         // the abstract interpreter which performs abstract reference counting with full cycle detection (i.e., \rightarrow_{arc++} in the paper)
@@ -89,12 +89,12 @@ object Main {
   }
 
   // machine definitions
-  private def machineAAM = new AAMOriginal[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
-  private def machineAAMGC = new AAMGC[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
-  private def machineAAMGC_gammaCFA = new AAMGCAlt[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
-  private def machineAAMARC = new AAMRefCountingVanilla[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
-  private def machineAAMARCplus = new AAMRefCountingKont[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
-  private def machineAAMARCplusplus = new AAMRefCounting[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
+  private def machineAAM = new MachineAAM[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
+  private def machineAAMGC = new MachineAAMGC[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
+  private def machineAAMGCAlt = new MachineAAMGCAlt[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
+  private def machineAAMARC = new MachineAAMARC[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
+  private def machineAAMARCplus = new MachineAAMARCplus[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
+  private def machineAAMARCplusplus = new MachineAAMARCplusplus[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
 
   // benchmark definitions
   private def loadBenchmark(name: String, subfolder: String) = Benchmark(name, s"$BENCHMARK_DIR/$subfolder/$name.scm")

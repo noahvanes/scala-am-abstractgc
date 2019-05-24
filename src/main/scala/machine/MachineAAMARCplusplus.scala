@@ -18,9 +18,9 @@ import java.util.UUID
  * be evaluated within this environment, whereas a continuation state only
  * contains the value reached.
  */
-class AAMRefCounting[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
+class MachineAAMARCplusplus[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
     extends EvalKontMachine[Exp, Abs, Addr, Time] {
-  def name = "AAMRefCounting"
+  def name = "MachineAAMARCplusplus"
 
   var count = 0
 

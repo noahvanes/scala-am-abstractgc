@@ -1,7 +1,6 @@
-
-class AAMRefCountingVanilla[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
+class MachineAAMARC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
     extends EvalKontMachine[Exp, Abs, Addr, Time] {
-  def name = "AAMRefCountingVanilla"
+  def name = "MachineAAMARC"
 
   var count = 0
 

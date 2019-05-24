@@ -16,9 +16,9 @@
  * be evaluated within this environment, whereas a continuation state only
  * contains the value reached.
  */
-class AAMOriginal[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
+class MachineAAM[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : Timestamp]
     extends EvalKontMachine[Exp, Abs, Addr, Time] {
-  def name = "AAMOriginal"
+  def name = "MachineAAM"
 
   trait KontAddr
   case class NormalKontAddress(exp: Exp, time: Time) extends KontAddr {
