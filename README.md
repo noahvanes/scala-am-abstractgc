@@ -22,4 +22,4 @@ In addition, implementations are provided of "traditional" abstract garbage coll
 Note that, at this point, all our machine abstractions only support a limited subset of Scheme, as the input expression first needs to be preprocessed to compute free variables and to inline references to primitives, which is beneficial to the efficiency of abstract garbage collection.
 
 For more information on abstract garbage collection, consult the following publication:
-- Might, M., & Shivers, O. (2006, September). Improving flow analyses via ΓCFA: Abstract garbage collection and counting. In ACM SIGPLAN Notices (Vol. 41, No. 9, pp. 13-25). ACM, [pdf](https://scholar.google.be/scholar?output=instlink&q=info:B5edOVcrE-4J:scholar.google.com/&hl=en&as_sdt=0,5&scillfp=5544457856398583264&oi=lle).
+- Might, M., & Shivers, O. (2006, September). Improving flow analyses via ΓCFA: Abstract garbage collection and counting. In ACM SIGPLAN Notices (Vol. 41, No. 9, pp. 13-25). ACM, [pdf](http://matt.might.net/papers/might2006gcfa.pdf).
