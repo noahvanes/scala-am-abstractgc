@@ -20,10 +20,10 @@ object Main {
                                                       // (NOTE: to avoid the impact of graph construction on performance, the graph will be generated after the actual benchmark measurements)
 
   // configure benchmark parameters
-  private val MAX_WARMUP_RUNS    = 100    // maximum number of warmup runs per benchmark program
-  private val MAX_WARMUP_TIME    = 120    // maximum total time spent on warmup (in seconds) per benchmark program
-  private val NUMBER_OF_TRIALS   = 30     // number of trials/measurements per benchmark program
-  private val MAX_TIME_PER_TRIAL = 60     // timeout per trial (in seconds)
+  private val MAX_WARMUP_RUNS    = 0      // maximum number of warmup runs per benchmark program
+  private val MAX_WARMUP_TIME    = 0      // maximum total time spent on warmup (in seconds) per benchmark program
+  private val NUMBER_OF_TRIALS   = 1     // number of trials/measurements per benchmark program
+  private val MAX_TIME_PER_TRIAL = 180     // timeout per trial (in seconds)
                                           // NOTE: as memory usage increases throughout a trial, higher values of MAX_TIME_PER_TRIAL might cause out-of-memory exceptions
 
   // congifure context-sensitivity of the analysis
@@ -41,30 +41,30 @@ object Main {
   // configure which abstract interpreters / machines to compare in the benchmarks
   private val ABSTRACT_MACHINES = List(
   //  machineAAM,                 // uncomment to include an abstract interpreter without abstract GC (i.e., \rightarrow in the paper)
-  //  machineAAMGC,               // uncomment to include an abstract interpreter with abstract tracing GC at every step (i.e., \rightarrow_{\Gamma} in the paper)
+      machineAAMGC                // uncomment to include an abstract interpreter with abstract tracing GC at every step (i.e., \rightarrow_{\Gamma} in the paper)
   //  machineAAMGCAlt,            // uncomment to include an abstract interpreter which performs abstract tracing GC at every join operation in the store (i.e., \rightarrow_{\GammaCFA} in the paper)
   //  machineAAMARC,              // uncomment to include an abstract interpreter which performs abstract reference counting without cycle detection (i.e., \rightarrow_{arc} in the paper)
   //  machineAAMARCplus,          // uncomment to include an abstract interpreter which performs abstract reference counting with only cycle detection in the kontinuation store (i.e., \rightarrow_{arc+} in the paper)
-    machineAAMARCplusplus         // the abstract interpreter which performs abstract reference counting with full cycle detection (i.e., \rightarrow_{arc++} in the paper)
+  // machineAAMARCplusplus        // the abstract interpreter which performs abstract reference counting with full cycle detection (i.e., \rightarrow_{arc++} in the paper)
   )
 
   // configure which benchmarks to run (uncomment to include; using the same names as in the paper)
   private val BENCHMARK_PROGRAMS = List(
-    // cpstak,
-    // diviter,
-    // divrec,
-    // destruc,
-    // triangl,
-    // puzzle,
-    // takl,
+    cpstak,
+    diviter,
+    divrec,
+    destruc,
+    triangl,
+    puzzle,
+    takl,
     // browse,
     // boyer,
     // deriv,
     // dderiv,
-    // collatz,
-    // gcipd,
-    // primtest,
-    // rsa,
+    collatz,
+    gcipd,
+    primtest,
+    rsa,
     nqueens
   )
 
@@ -75,16 +75,16 @@ object Main {
   private def kCFA(k: Int) = KCFA(k)
 
   // lattice definitions
-  private def typeLattice: SchemeLattice                  = new MakeSchemeLattice[Type.S, Concrete.B, Type.I, Type.F, Type.C, Type.Sym](false)
-  private def constantPropagationLattice: SchemeLattice   = new MakeSchemeLattice[ConstantPropagation.S, Concrete.B, ConstantPropagation.I, ConstantPropagation.F, ConstantPropagation.C, ConstantPropagation.Sym](false)
+  private def typeLattice: SchemeLattice                  = new MakeSchemeLattice[Type.S, Concrete.B, Type.I, Type.F, Type.C, Type.Sym](true)
+  private def constantPropagationLattice: SchemeLattice   = new MakeSchemeLattice[ConstantPropagation.S, Concrete.B, ConstantPropagation.I, ConstantPropagation.F, ConstantPropagation.C, ConstantPropagation.Sym](true)
   private def kPointsToLattice(k: Int): SchemeLattice = {
     val kpts = new KPointsTo(k)
-    new MakeSchemeLattice[kpts.S, Concrete.B, kpts.I, kpts.F, kpts.C, kpts.S](false)
+    new MakeSchemeLattice[kpts.S, Concrete.B, kpts.I, kpts.F, kpts.C, kpts.S](true)
   }
-  private def concreteLattice: SchemeLattice              = new MakeSchemeLattice[Concrete.S, Concrete.B, Concrete.I, Concrete.F, Concrete.C, Concrete.Sym](false)
+  private def concreteLattice: SchemeLattice              = new MakeSchemeLattice[Concrete.S, Concrete.B, Concrete.I, Concrete.F, Concrete.C, Concrete.Sym](true)
   private def boundedIntegerLattice(bound: Int): SchemeLattice = {
     val bounded = new BoundedInteger(bound)
-    new MakeSchemeLattice[Type.S, Concrete.B, bounded.I, Type.F, Type.C, Type.Sym](false)
+    new MakeSchemeLattice[Type.S, Concrete.B, bounded.I, Type.F, Type.C, Type.Sym](true)
   }
 
   // machine definitions

@@ -400,17 +400,14 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
 
 /* WARNING: For efficiency, we currently assume that: refs(join(u,v)) = refs(u) U refs(v), although this assumption can easily be avoided */
 case class GCStore[Addr : Address, Abs : JoinLattice]
-  (content: Map[Addr,Abs],
-   refs: Map[Addr,Set[Addr]] = Map[Addr,Set[Addr]]().withDefaultValue(Set()))
+  (content: Map[Addr, (Abs, Count)],
+   refs: Map[Addr, Set[Addr]] = Map[Addr,Set[Addr]]().withDefaultValue(Set()))
   extends Store[Addr,Abs] {
 
     def keys = content.keys
-    def forall(p: ((Addr,Abs)) => Boolean) = content.forall(p)
-    def lookup(a: Addr) = content.get(a)
-    def lookupBot(a: Addr) = content.get(a).getOrElse(JoinLattice[Abs].bottom)
-
-    def update(a: Addr, v: Abs) = extend(a,v)
-    def updateOrExtend(a: Addr, v: Abs) = extend(a,v)
+    def forall(p: ((Addr,Abs)) => Boolean) = content.forall({ case (a, (v, _)) => p(a, v) })
+    def lookup(a: Addr) = content.get(a).map(_._1)
+    def lookupBot(a: Addr) = lookup(a).getOrElse(JoinLattice[Abs].bottom)
 
     private def mark(adr: Addr, marked: Set[Addr]): Set[Addr] =
       if (marked.contains(adr)) {
@@ -430,10 +427,18 @@ case class GCStore[Addr : Address, Abs : JoinLattice]
       sweep(marked)
     }
 
-    def extend(adr: Addr, v: Abs) = {
-      val updatedAdrRefs = refs(adr) ++ JoinLattice[Abs].references(v)
-      val updatedValue = if (content.contains(adr)) { JoinLattice[Abs].join(content(adr),v) } else { v }
-      GCStore(content + (adr -> updatedValue), refs + (adr -> updatedAdrRefs))
+    def extend(a: Addr, v: Abs) = content.get(a) match {
+      case None           => GCStore(content + (a -> (v, CountOne)),                         refs + (a -> JoinLattice[Abs].references(v)))
+      case Some((v2, n))  => GCStore(content + (a -> (JoinLattice[Abs].join(v2, v), n.inc)), refs + (a -> (refs(a) ++ JoinLattice[Abs].references(v))))
+    }
+    def update(a: Addr, v: Abs) = content.get(a) match {
+      case None                      => throw new RuntimeException("Updating store at an adress not used")
+      case Some((_, CountOne))       => GCStore(content + (a -> (v, CountOne)),                                 refs + (a -> JoinLattice[Abs].references(v)))
+      case Some((v2, CountInfinity)) => GCStore(content + (a -> (JoinLattice[Abs].join(v2, v), CountInfinity)), refs + (a -> (refs(a) ++ JoinLattice[Abs].references(v))))
+    }
+    def updateOrExtend(a: Addr, v: Abs) = content.get(a) match {
+      case None    => extend(a, v)
+      case Some(_) => update(a, v)
     }
 
     /* TODO */
@@ -455,18 +460,30 @@ case class GCStore[Addr : Address, Abs : JoinLattice]
 
 class StoreJoinException extends Exception
 case class GCStoreAlt[Addr : Address, Abs : JoinLattice]
-  (content: Map[Addr,Abs],
+  (content: Map[Addr,(Abs, Count)],
    refs: Map[Addr,Set[Addr]] = Map[Addr,Set[Addr]]().withDefaultValue(Set()),
    marked: Boolean = false)
   extends Store[Addr,Abs] {
 
   def keys = content.keys
-  def forall(p: ((Addr,Abs)) => Boolean) = content.forall(p)
-  def lookup(a: Addr) = content.get(a)
-  def lookupBot(a: Addr) = content.get(a).getOrElse(JoinLattice[Abs].bottom)
+  def forall(p: ((Addr,Abs)) => Boolean) = content.mapValues(_._1).forall(p)
+  def lookup(a: Addr) = content.get(a).map(_._1)
+  def lookupBot(a: Addr) = lookup(a).getOrElse(JoinLattice[Abs].bottom)
 
-  def update(a: Addr, v: Abs) = extend(a,v)
-  def updateOrExtend(a: Addr, v: Abs) = extend(a,v)
+  def extend(a: Addr, v: Abs) = content.get(a) match {
+    case None                     => GCStoreAlt(content + (a -> (v, CountOne)),                         refs + (a -> JoinLattice[Abs].references(v)))
+    case Some(_) if marked        => throw new StoreJoinException()
+    case Some((v2, n))            => GCStoreAlt(content + (a -> (JoinLattice[Abs].join(v2, v), n.inc)), refs + (a -> (refs(a) ++ JoinLattice[Abs].references(v))))
+  }
+  def update(a: Addr, v: Abs) = content.get(a) match {
+    case None                      => throw new RuntimeException("Updating store at an adress not used")
+    case Some((_, CountOne))       => GCStoreAlt(content + (a -> (v, CountOne)),                                 refs + (a -> JoinLattice[Abs].references(v)))
+    case Some((v2, CountInfinity)) => GCStoreAlt(content + (a -> (JoinLattice[Abs].join(v2, v), CountInfinity)), refs + (a -> (refs(a) ++ JoinLattice[Abs].references(v))))
+  }
+  def updateOrExtend(a: Addr, v: Abs) = content.get(a) match {
+    case None    => extend(a, v)
+    case Some(_) => update(a, v)
+  }
 
   private def mark(adr: Addr, marked: Set[Addr]): Set[Addr] =
     if (marked.contains(adr)) {
@@ -484,16 +501,6 @@ case class GCStoreAlt[Addr : Address, Abs : JoinLattice]
   def collect(roots: Set[Addr]): GCStoreAlt[Addr,Abs] = {
     val marked = roots.foldLeft(Set[Addr]())((acc, ref) => mark(ref, acc))
     sweep(marked)
-  }
-
-  def extend(adr: Addr, v: Abs) = {
-    val abstractCountNonZero = content.contains(adr)
-    if (marked && abstractCountNonZero) {
-      throw new StoreJoinException()
-    }
-    val updatedAdrRefs = refs(adr) ++ JoinLattice[Abs].references(v)
-    val updatedValue = if (abstractCountNonZero) { JoinLattice[Abs].join(content(adr),v) } else { v }
-    GCStoreAlt(content + (adr -> updatedValue), refs + (adr -> updatedAdrRefs))
   }
 
   /* TODO */
@@ -619,8 +626,8 @@ object Store {
     val content = values.toMap.map({ case (k,v) => (k,(v,JoinLattice[Abs].references(v))) })
     new RefCountingStoreVanilla[Addr,Abs](content)
   }
-  def gcStore[Addr:Address,Abs:JoinLattice](values: Iterable[(Addr,Abs)]): GCStore[Addr,Abs] = new GCStore[Addr,Abs](values.toMap)
-  def gcStoreAlt[Addr:Address,Abs:JoinLattice](values: Iterable[(Addr,Abs)]): GCStoreAlt[Addr,Abs] = new GCStoreAlt[Addr,Abs](values.toMap)
+  def gcStore[Addr:Address,Abs:JoinLattice](values: Iterable[(Addr,Abs)]): GCStore[Addr,Abs] = new GCStore[Addr,Abs](values.toMap.mapValues(v => (v, CountOne)).toMap)
+  def gcStoreAlt[Addr:Address,Abs:JoinLattice](values: Iterable[(Addr,Abs)]): GCStoreAlt[Addr,Abs] = new GCStoreAlt[Addr,Abs](values.toMap.mapValues(v => (v, CountOne)).toMap)
 
   implicit def monoid[Addr : Address, Abs : JoinLattice]: Monoid[Store[Addr, Abs]] =
     new Monoid[Store[Addr, Abs]] {

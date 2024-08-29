@@ -5,7 +5,7 @@ case class DisjointSet[A]
    val ranks: Map[A,Int] = Map[A,Int]().withDefaultValue(0)) {
 
   // MARK: Core methods
-
+  
   def find(a: A): A = {
     val parent = tree(a)
     if (parent == a) {
