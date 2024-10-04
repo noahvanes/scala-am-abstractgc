@@ -53,8 +53,8 @@ case class DisjointSet[A]
 
   // MARK: "Unsafe" methods (i.e. must be applied to _all_ elements in the SCC)
 
-  def -(elem: A): DisjointSet[A] = DisjointSet(tree = tree-elem, rank=rank-elem, next=next-elem, last=last-elem)
-  def --(elems: Iterable[A]): DisjointSet[A] = DisjointSet(tree = tree--elems, rank=rank--elems, next=next--elems, last=last--elems)
+  def -(elem: A): DisjointSet[A]              = DisjointSet(tree = tree-elem,   rank=rank-elem,   next=next-elem,   last=last-elem)
+  def --(elems: Iterable[A]): DisjointSet[A]  = DisjointSet(tree = tree--elems, rank=rank--elems, next=next--elems, last=last--elems)
 
   // MARK: Debugging
 
