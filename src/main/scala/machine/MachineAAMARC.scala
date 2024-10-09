@@ -32,7 +32,7 @@ class MachineAAMARC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : 
     private def updateRefs(prevControl: Control, frmrefs: Iterable[Addr], stkrefs: Iterable[Addr]): State = {
       val addedRefs = control.references -- prevControl.references
       val removedRefs = prevControl.references -- control.references
-      val updatedStore = store.incRefs(addedRefs).incRefs(stkrefs).decRefs(removedRefs).decRefs(frmrefs)
+      val updatedStore = store.incRefs(addedRefs).incRefs(stkrefs).decRefs(removedRefs).decRefs(frmrefs).collect()
       this.copy(store = updatedStore)
     }
 
@@ -64,7 +64,7 @@ class MachineAAMARC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : 
           case Kont(frame, next) =>
             val frmrefs = frame.references
             val (kstore1, decr) = kstore.pop(next)
-            val store1 = store.incRefs(frmrefs).decRefs(decr)
+            val store1 = store.incRefs(frmrefs).decRefs(decr).collect()
             val updatedState = this.copy(adr = next, kstore = kstore1, store = store1)
             updatedState.integrate(frmrefs, sem.stepKont(v, frame, store1, t))
         })

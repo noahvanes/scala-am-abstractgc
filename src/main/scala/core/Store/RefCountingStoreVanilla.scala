@@ -7,6 +7,7 @@ import core.DisjointSet
 case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
   (content: Map[Addr,(Abs,Set[Addr])],
         in: Map[Addr,(Int,Set[Addr])] = Map[Addr,(Int,Set[Addr])]().withDefaultValue(0,Set[Addr]()),
+   toCheck: Set[Addr] = Set.empty[Addr], 
         hc: Int = 0)
   extends Store[Addr,Abs] {
 
@@ -32,39 +33,50 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
   def incRefs(addrs: Iterable[Addr]): RefCountingStoreVanilla[Addr,Abs] =
     this.copy(in = addrs.foldLeft(in)((acc,ref) => incRootRef(ref,acc)))
 
-  private def deallocRef(update: AddrRefs => AddrRefs, to: Addr, currentIn: AddrCount, toDealloc: AddrQueue): AddrCount = {
+  private def decRef(update: AddrRefs => AddrRefs, to: Addr, currentIn: AddrCount): (Boolean, AddrCount) = {
     val current = currentIn(to)
     val updated@(count, refs) = update(current)
     if (count == 0 && refs.isEmpty) {
-      toDealloc.enqueue(to)
-      currentIn
+      (true, currentIn - to)
     } else {
-      currentIn + (to -> updated)
+      (false, currentIn + (to -> updated))
     }
   }
 
-  private def deallocRootRef(target: Addr, currentIn: AddrCount, toDealloc: AddrQueue): AddrCount
-     = deallocRef({ case (counts,refs) => (counts-1,refs) }, target, currentIn, toDealloc)
+  private def decRootRef(target: Addr, currentIn: AddrCount): (Boolean, AddrCount)
+     = decRef({ case (counts,refs) => (counts-1,refs) }, target, currentIn)
 
-  private def deallocEdgeRef(from: Addr, to: Addr, currentIn: AddrCount, toDealloc: AddrQueue): AddrCount
-     = deallocRef({ case (counts,refs) => (counts,refs-from) }, to, currentIn, toDealloc)
-
-
-  private def dealloc(addr: Addr, currentIn: AddrCount, toDealloc: AddrQueue, toDelete: AddrQueue): AddrCount = {
-    toDelete.enqueue(addr)
-    val succs = content(addr)._2
-    succs.foldLeft(currentIn)((acc,ref) => deallocEdgeRef(addr,ref,acc,toDealloc))
-  }
+  private def decEdgeRef(from: Addr, to: Addr, currentIn: AddrCount): (Boolean, AddrCount)
+     = decRef({ case (counts,refs) => (counts,refs-from) }, to, currentIn)
 
   def decRefs(addrs: Iterable[Addr]): RefCountingStoreVanilla[Addr,Abs] = {
-    val toDelete = scala.collection.mutable.Queue[Addr]()
-    val toDealloc = scala.collection.mutable.Queue[Addr]()
-    var updatedIn = addrs.foldLeft(this.in)((acc, ref) => deallocRootRef(ref, acc, toDealloc))
+    val (updatedIn, updatedToCheck) = 
+        addrs.foldLeft((this.in, this.toCheck)) { 
+            case ((accIn, accToCheck), addr) =>
+                val (isGarbage, accIn2) = decRootRef(addr, accIn)
+                (accIn2, if (isGarbage) (accToCheck + addr) else accToCheck)
+        }
+    this.copy(in = updatedIn, toCheck = updatedToCheck)
+  }
+
+  def collect(): RefCountingStoreVanilla[Addr,Abs] = {
+    var toDealloc       = toCheck.toList.filterNot(addr => in.contains(addr))
+    var updatedContent  = this.content 
+    var updatedIn       = this.in 
+    var updatedHc       = this.hc 
     while (toDealloc.nonEmpty) {
-      updatedIn = dealloc(toDealloc.dequeue, updatedIn, toDealloc, toDelete)
+        val addr = toDealloc.head
+        toDealloc = toDealloc.tail 
+        val (vlu, succs) = updatedContent(addr)
+        updatedContent = updatedContent - addr 
+        updatedHc = updatedHc - vlu.hashCode()
+        updatedIn = succs.foldLeft(updatedIn) { (accIn, succ) => 
+            val (isGarbage, accIn2) = decEdgeRef(addr, succ, accIn)
+            if (isGarbage) { toDealloc = succ :: toDealloc }
+            accIn2
+        }
     }
-    val updatedHc = toDelete.foldLeft(this.hc)((acc, ref) => acc - content(ref)._1.hashCode())
-    RefCountingStoreVanilla(content -- toDelete, updatedIn -- toDelete, updatedHc)
+    RefCountingStoreVanilla(updatedContent, updatedIn, Set.empty, updatedHc)
   }
 
   def extend(adr: Addr, v: Abs): RefCountingStoreVanilla[Addr,Abs] = content.get(adr) match {
@@ -84,7 +96,7 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
         if (urefs.contains(ref)) { acc } else { (incEdgeRef(adr, ref, acc._1), acc._2 + ref) }
       })
       val updatedContent = this.content + (adr -> (updatedVal, updatedRefs))
-      RefCountingStoreVanilla(updatedContent, updatedIn, updatedHc)
+      this.copy(content = updatedContent, in = updatedIn, hc = updatedHc)
   }
 
   def update(a: Addr, v: Abs): RefCountingStoreVanilla[Addr,Abs] = extend(a,v)
