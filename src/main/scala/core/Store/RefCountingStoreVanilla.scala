@@ -13,7 +13,6 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
 
   type AddrRefs = (Int, Set[Addr])
   type AddrCount = Map[Addr, AddrRefs]
-  type AddrQueue = scala.collection.mutable.Queue[Addr]
 
   def keys = content.keys
   def forall(p: ((Addr,Abs)) => Boolean) = content.forall(n => p(n._1,n._2._1))
