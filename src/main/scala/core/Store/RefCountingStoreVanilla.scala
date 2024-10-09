@@ -5,7 +5,7 @@ import Util.MapStrict
 import core.DisjointSet
 
 case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
-  (content: Map[Addr,(Abs,Set[Addr])],
+  (content: Map[Addr,(Abs,Count,Set[Addr])],
         in: Map[Addr,(Int,Set[Addr])] = Map[Addr,(Int,Set[Addr])]().withDefaultValue(0,Set[Addr]()),
    toCheck: Set[Addr] = Set.empty[Addr], 
         hc: Int = 0)
@@ -49,13 +49,15 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
   private def decEdgeRef(from: Addr, to: Addr, currentIn: AddrCount): (Boolean, AddrCount)
      = decRef({ case (counts,refs) => (counts,refs-from) }, to, currentIn)
 
+  private def decRefs(addrs: Iterable[Addr], currentIn: AddrCount, currentToCheck: Set[Addr]): (AddrCount, Set[Addr]) =
+    addrs.foldLeft((currentIn, currentToCheck)) { 
+        case ((accIn, accToCheck), addr) =>
+            val (isGarbage, accIn2) = decRootRef(addr, accIn)
+            (accIn2, if (isGarbage) (accToCheck + addr) else accToCheck)
+    }
+
   def decRefs(addrs: Iterable[Addr]): RefCountingStoreVanilla[Addr,Abs] = {
-    val (updatedIn, updatedToCheck) = 
-        addrs.foldLeft((this.in, this.toCheck)) { 
-            case ((accIn, accToCheck), addr) =>
-                val (isGarbage, accIn2) = decRootRef(addr, accIn)
-                (accIn2, if (isGarbage) (accToCheck + addr) else accToCheck)
-        }
+    val (updatedIn, updatedToCheck) = decRefs(addrs, this.in, this.toCheck)
     this.copy(in = updatedIn, toCheck = updatedToCheck)
   }
 
@@ -67,7 +69,7 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
     while (toDealloc.nonEmpty) {
         val addr = toDealloc.head
         toDealloc = toDealloc.tail 
-        val (vlu, succs) = updatedContent(addr)
+        val (vlu, _, succs) = updatedContent(addr)
         updatedContent = updatedContent - addr 
         updatedHc = updatedHc - vlu.hashCode()
         updatedIn = succs.foldLeft(updatedIn) { (accIn, succ) => 
@@ -79,29 +81,59 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
     RefCountingStoreVanilla(updatedContent, updatedIn, Set.empty, updatedHc)
   }
 
-  def extend(adr: Addr, v: Abs): RefCountingStoreVanilla[Addr,Abs] = content.get(adr) match {
-    case None =>
-      val vrefs = JoinLattice[Abs].references(v)
-      val updatedContent = this.content + (adr -> (v, vrefs))
-      val updatedIn = vrefs.foldLeft(this.in)((acc, ref) => incEdgeRef(adr, ref, acc))
-      val updatedHc = this.hc + v.hashCode()
-      this.copy(content = updatedContent, in = updatedIn, hc = updatedHc)
-    case Some((u, _)) if JoinLattice[Abs].subsumes(u, v) =>
-      this
-    case Some((u, urefs)) =>
-      val vrefs = JoinLattice[Abs].references(v)
-      val updatedVal = JoinLattice[Abs].join(u, v)
-      val updatedHc = this.hc - u.hashCode() + updatedVal.hashCode()
-      val (updatedIn, updatedRefs) = vrefs.foldLeft((this.in, urefs))((acc, ref) => {
-        if (urefs.contains(ref)) { acc } else { (incEdgeRef(adr, ref, acc._1), acc._2 + ref) }
-      })
-      val updatedContent = this.content + (adr -> (updatedVal, updatedRefs))
-      this.copy(content = updatedContent, in = updatedIn, hc = updatedHc)
+  def extend(adr: Addr, v: Abs): RefCountingStoreVanilla[Addr,Abs] = 
+    content.get(adr) match {
+        case None =>
+            val vrefs = JoinLattice[Abs].references(v)
+            val updatedContent = this.content + (adr -> (v, CountOne, vrefs))
+            val updatedIn = vrefs.foldLeft(this.in)((acc, ref) => incEdgeRef(adr, ref, acc))
+            val updatedHc = this.hc + v.hashCode()
+            this.copy(content = updatedContent, in = updatedIn, hc = updatedHc)
+        case Some((u, count, urefs)) if JoinLattice[Abs].subsumes(u, v) =>
+            if (count == CountInfinity) {
+                this
+            } else {
+                this.copy(content = content + (adr -> (u, CountInfinity, urefs))) 
+            }
+        case Some((u, _, urefs)) =>
+            val vrefs = JoinLattice[Abs].references(v)
+            val updatedVal = JoinLattice[Abs].join(u, v)
+            val updatedHc = this.hc - u.hashCode() + updatedVal.hashCode()
+            val (updatedIn, updatedRefs) = vrefs.foldLeft((this.in, urefs))((acc, ref) => {
+                if (urefs.contains(ref)) { acc } else { (incEdgeRef(adr, ref, acc._1), acc._2 + ref) }
+            })
+            val updatedContent = this.content + (adr -> (updatedVal, CountInfinity, updatedRefs))
+            this.copy(content = updatedContent, in = updatedIn, hc = updatedHc)
+    }
+
+  def update(adr: Addr, v: Abs): RefCountingStoreVanilla[Addr,Abs] =
+    content.get(adr) match {
+        case None => 
+            throw new RuntimeException("Updating store at an adress not used")
+        case Some((u, CountOne, urefs)) => // STRONG UPDATE
+            val vrefs = JoinLattice[Abs].references(v)
+            val updatedHc = this.hc - u.hashCode() + v.hashCode()
+            val (updatedIn, updatedToCheck) = decRefs(urefs -- vrefs, this.in, this.toCheck)
+            val updatedIn2 = vrefs.foldLeft(updatedIn) { (acc, ref) => 
+                if (urefs.contains(ref)) { acc } else { incEdgeRef(adr, ref, acc) }    
+            }
+            val updatedContent = this.content + (adr -> (v, CountOne, vrefs))
+            this.copy(content = updatedContent, in = updatedIn2, toCheck = updatedToCheck, hc = updatedHc)
+        case Some((u, CountInfinity, urefs)) => // WEAK UPDATE
+            val vrefs = JoinLattice[Abs].references(v)
+            val updatedVal = JoinLattice[Abs].join(u, v)
+            val updatedHc = this.hc - u.hashCode() + updatedVal.hashCode()
+            val (updatedIn, updatedRefs) = vrefs.foldLeft((this.in, urefs))((acc, ref) => {
+                if (urefs.contains(ref)) { acc } else { (incEdgeRef(adr, ref, acc._1), acc._2 + ref) }
+            })
+            val updatedContent = this.content + (adr -> (updatedVal, CountInfinity, updatedRefs))
+            this.copy(content = updatedContent, in = updatedIn, hc = updatedHc)    
+    }
+  
+  def updateOrExtend(a: Addr, v: Abs) = content.get(a) match {
+    case None    => extend(a, v)
+    case Some(_) => update(a, v)
   }
-
-  def update(a: Addr, v: Abs): RefCountingStoreVanilla[Addr,Abs] = extend(a,v)
-  def updateOrExtend(a: Addr, v: Abs): RefCountingStoreVanilla[Addr,Abs] = extend(a,v)
-
   /* TODO */
 
   def join(that: Store[Addr,Abs]) = throw new Exception("NYI: RefCountingStore.join(Store[Addr,Abs])")

@@ -60,7 +60,7 @@ object Store {
     new RefCountingStore[Addr,Abs](content)
   }
   def refCountStoreVanilla[Addr:Address,Abs:JoinLattice](values: Iterable[(Addr,Abs)]): RefCountingStoreVanilla[Addr,Abs] = {
-    val content = values.toMap.map({ case (k,v) => (k,(v,JoinLattice[Abs].references(v))) })
+    val content = values.toMap.map({ case (k,v) => (k,(v,CountOne,JoinLattice[Abs].references(v))) })
     new RefCountingStoreVanilla[Addr,Abs](content)
   }
   def gcStore[Addr:Address,Abs:JoinLattice](values: Iterable[(Addr,Abs)]): GCStore[Addr,Abs] = new GCStore[Addr,Abs](values.toMap.mapValues(v => (v, CountOne)).toMap)
