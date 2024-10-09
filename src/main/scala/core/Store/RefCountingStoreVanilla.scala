@@ -6,54 +6,38 @@ import core.DisjointSet
 
 case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
   (content: Map[Addr,(Abs,Set[Addr])],
-        in: Map[Addr,(Int,Set[Addr])] = Map[Addr,(Int,Set[Addr])]().withDefaultValue(0,Set[Addr]()),
+        in: Map[Addr,Int] = Map[Addr,Int]().withDefaultValue(0),
    toCheck: Set[Addr] = Set.empty[Addr], 
         hc: Int = 0)
   extends Store[Addr,Abs] {
 
-  type AddrRefs = (Int, Set[Addr])
-  type AddrCount = Map[Addr, AddrRefs]
-  type AddrQueue = scala.collection.mutable.Queue[Addr]
+  type AddrCount = Map[Addr, Int]
 
   def keys = content.keys
   def forall(p: ((Addr,Abs)) => Boolean) = content.forall(n => p(n._1,n._2._1))
   def lookup(a: Addr) = content.get(a).map(_._1)
   def lookupBot(a: Addr) = lookup(a).getOrElse(JoinLattice[Abs].bottom)
 
-  private def incRootRef(a: Addr, currentIn: AddrCount) = {
-    val (counts, refs) = currentIn(a)
-    currentIn + (a -> (counts + 1, refs))
-  }
-
-  private def incEdgeRef(from: Addr, to: Addr, currentIn: AddrCount) = {
-      val (counts, refs) = currentIn(to)
-      currentIn + (to -> (counts, refs + from))
-  }
+  private def incRef(a: Addr, currentIn: AddrCount) = 
+    currentIn + (a -> (currentIn(a) + 1))
 
   def incRefs(addrs: Iterable[Addr]): RefCountingStoreVanilla[Addr,Abs] =
-    this.copy(in = addrs.foldLeft(in)((acc,ref) => incRootRef(ref,acc)))
+    this.copy(in = addrs.foldLeft(in)((acc,ref) => incRef(ref,acc)))
 
-  private def decRef(update: AddrRefs => AddrRefs, to: Addr, currentIn: AddrCount): (Boolean, AddrCount) = {
-    val current = currentIn(to)
-    val updated@(count, refs) = update(current)
-    if (count == 0 && refs.isEmpty) {
+  private def decRef(to: Addr, currentIn: AddrCount): (Boolean, AddrCount) = {
+    val updated = currentIn(to) - 1
+    if (updated == 0) {
       (true, currentIn - to)
     } else {
       (false, currentIn + (to -> updated))
     }
   }
 
-  private def decRootRef(target: Addr, currentIn: AddrCount): (Boolean, AddrCount)
-     = decRef({ case (counts,refs) => (counts-1,refs) }, target, currentIn)
-
-  private def decEdgeRef(from: Addr, to: Addr, currentIn: AddrCount): (Boolean, AddrCount)
-     = decRef({ case (counts,refs) => (counts,refs-from) }, to, currentIn)
-
   def decRefs(addrs: Iterable[Addr]): RefCountingStoreVanilla[Addr,Abs] = {
     val (updatedIn, updatedToCheck) = 
         addrs.foldLeft((this.in, this.toCheck)) { 
             case ((accIn, accToCheck), addr) =>
-                val (isGarbage, accIn2) = decRootRef(addr, accIn)
+                val (isGarbage, accIn2) = decRef(addr, accIn)
                 (accIn2, if (isGarbage) (accToCheck + addr) else accToCheck)
         }
     this.copy(in = updatedIn, toCheck = updatedToCheck)
@@ -71,7 +55,7 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
         updatedContent = updatedContent - addr 
         updatedHc = updatedHc - vlu.hashCode()
         updatedIn = succs.foldLeft(updatedIn) { (accIn, succ) => 
-            val (isGarbage, accIn2) = decEdgeRef(addr, succ, accIn)
+            val (isGarbage, accIn2) = decRef(succ, accIn)
             if (isGarbage) { toDealloc = succ :: toDealloc }
             accIn2
         }
@@ -83,7 +67,7 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
     case None =>
       val vrefs = JoinLattice[Abs].references(v)
       val updatedContent = this.content + (adr -> (v, vrefs))
-      val updatedIn = vrefs.foldLeft(this.in)((acc, ref) => incEdgeRef(adr, ref, acc))
+      val updatedIn = vrefs.foldLeft(this.in)((acc, ref) => incRef(ref, acc))
       val updatedHc = this.hc + v.hashCode()
       this.copy(content = updatedContent, in = updatedIn, hc = updatedHc)
     case Some((u, _)) if JoinLattice[Abs].subsumes(u, v) =>
@@ -92,9 +76,9 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
       val vrefs = JoinLattice[Abs].references(v)
       val updatedVal = JoinLattice[Abs].join(u, v)
       val updatedHc = this.hc - u.hashCode() + updatedVal.hashCode()
-      val (updatedIn, updatedRefs) = vrefs.foldLeft((this.in, urefs))((acc, ref) => {
-        if (urefs.contains(ref)) { acc } else { (incEdgeRef(adr, ref, acc._1), acc._2 + ref) }
-      })
+      val (updatedIn, updatedRefs) = vrefs.foldLeft((this.in, urefs)) { (acc, ref) => 
+        if (urefs.contains(ref)) { acc } else { (incRef(ref, acc._1), acc._2 + ref) }
+      }
       val updatedContent = this.content + (adr -> (updatedVal, updatedRefs))
       this.copy(content = updatedContent, in = updatedIn, hc = updatedHc)
   }
