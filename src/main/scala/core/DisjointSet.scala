@@ -56,6 +56,7 @@ case class DisjointSet[A]
   def -(elem: A): DisjointSet[A]              = DisjointSet(tree = tree-elem,   rank=rank-elem,   next=next-elem,   last=last-elem)
   def --(elems: Iterable[A]): DisjointSet[A]  = DisjointSet(tree = tree--elems, rank=rank--elems, next=next--elems, last=last--elems)
 
+
   // MARK: Debugging
 
   def allSets(): List[Set[A]] = {

@@ -6,22 +6,22 @@ import core.DisjointSet
 
 case class RefCountingStore[Addr:Address, Abs:JoinLattice]
   (content: Map[Addr,(Abs,Set[Addr])],
-   in: Map[Addr,(Int,Set[Addr])] = Map[Addr,(Int,Set[Addr])]().withDefaultValue(0,Set[Addr]()),
-   ds: DisjointSet[Addr] = DisjointSet[Addr](),
-   hc: Int = 0)
+        in: Map[Addr,(Int,Set[Addr])] = Map[Addr,(Int,Set[Addr])]().withDefaultValue(0,Set[Addr]()),
+        ds: DisjointSet[Addr] = DisjointSet[Addr](),
+   toCheck: Set[Addr] = Set[Addr](),
+        hc: Int = 0)
 extends Store[Addr,Abs] {
 
   type AddrRefs = (Int,Set[Addr])
   type AddrCount = Map[Addr,AddrRefs]
-  type AddrQueue = scala.collection.mutable.Queue[Addr]
 
   def keys = content.keys
   def forall(p: ((Addr,Abs)) => Boolean) = content.forall(n => p(n._1,n._2._1))
   def lookup(a: Addr) = content.get(a).map(_._1)
   def lookupBot(a: Addr) = lookup(a).getOrElse(JoinLattice[Abs].bottom)
 
-  private def incRootRef(a: Addr, currentIn: AddrCount, currentDS: DisjointSet[Addr]) = {
-    val cls = currentDS.find(a)
+  private def incRootRef(a: Addr, currentIn: AddrCount) = {
+    val cls = ds.find(a)
     val (counts, refs) = currentIn(cls)
     currentIn + (cls -> (counts + 1, refs))
   }
@@ -33,76 +33,63 @@ extends Store[Addr,Abs] {
   }
 
   def incRefs(addrs: Iterable[Addr]): RefCountingStore[Addr,Abs] =
-    this.copy(in = addrs.foldLeft(in)((acc,ref) => incRootRef(ref,acc,this.ds)))
+    this.copy(in = addrs.foldLeft(in)((acc,ref) => incRootRef(ref, acc)))
 
-  private def deallocRef(update: AddrRefs => AddrRefs, to: Addr, currentIn: AddrCount, toDealloc: AddrQueue): AddrCount = {
-    val cls = ds.find(to)
+  private def decRef(update: AddrRefs => AddrRefs, cls: Addr, currentIn: AddrCount): (Boolean, AddrCount) = {
     val current = currentIn(cls)
     val updated@(count, refs) = update(current)
     if (count == 0 && refs.isEmpty) {
-      toDealloc.enqueue(cls)
-      currentIn
+      (true, currentIn - cls)
     } else {
-      currentIn + (cls -> updated)
+      (false, currentIn + (cls -> updated))
     }
   }
 
-  private def deallocRootRef(target: Addr, currentIn: AddrCount, toDealloc: AddrQueue): AddrCount
-    = deallocRef({ case (counts,refs) => (counts-1,refs) }, target, currentIn, toDealloc)
+  private def decRootRef(target: Addr, currentIn: AddrCount): (Boolean, AddrCount)
+    = decRef({ case (counts,refs) => (counts-1,refs) }, target, currentIn)
 
-  private def deallocEdgeRef(from: Addr, to: Addr, currentIn: AddrCount, toDealloc: AddrQueue): AddrCount
-    = deallocRef({ case (counts,refs) => (counts,refs-from) }, to, currentIn, toDealloc)
+  private def decEdgeRef(from: Addr, to: Addr, currentIn: AddrCount): (Boolean, AddrCount)
+    = decRef({ case (counts,refs) => (counts,refs-from) }, to, currentIn)
 
-
-  private def deallocSCC(cls: Addr, currentIn: AddrCount, toDealloc: AddrQueue, toDelete: AddrQueue): AddrCount = {
-
-    // Optimize deallocSCC for SCC components with a single node
-    // (since in practice, most of the times this will be the case)
-    if (ds.singleton(cls)) {
-      toDelete.enqueue(cls)
-      val succs = content(cls)._2
-      val updatedIn = succs.foldLeft(currentIn)((acc,ref) => deallocEdgeRef(cls,ref,acc,toDealloc))
-      return updatedIn
+  def collect(): RefCountingStore[Addr,Abs] = {
+    var toDealloc       = toCheck.filterNot(scc => in.contains(scc)).toList 
+    var updatedContent  = this.content 
+    var updatedIn       = this.in 
+    var updatedDs       = this.ds 
+    var updatedHc       = this.hc 
+    while (toDealloc.nonEmpty) {
+        val scc = toDealloc.head
+        toDealloc = toDealloc.tail 
+        // DEALLOC THE SCC 
+        val addrs = updatedDs.allOf(scc)
+        addrs.foreach { addr => 
+          val (vlu, succs) = updatedContent(addr)
+          updatedContent = updatedContent - addr 
+          updatedHc = updatedHc - vlu.hashCode() 
+          updatedIn = succs.toList.filterNot(updatedDs.find(_) == scc).foldLeft(updatedIn) { 
+            (accIn, succ) =>
+              val cls = updatedDs.find(succ)
+              val (isGarbage, accIn2) = decEdgeRef(addr, cls, accIn)
+              if (isGarbage) { toDealloc = cls :: toDealloc }
+              accIn2
+          }
+        }  
+        updatedDs = updatedDs -- addrs
     }
-
-    // In the more general, but also rare case the |SCC\ > 1:
-    // - All internal edges traversed and added to toDelete as well
-    // - All external edges are deallocated using ``deallocRef``
-    var updatedIn = currentIn
-    var marked = scala.collection.mutable.Set[Addr](cls)
-    var addrs = scala.collection.mutable.Queue[Addr](cls)
-    while (addrs.nonEmpty) {
-      val addr = addrs.dequeue
-      toDelete.enqueue(addr)
-      val succs = content(addr)._2
-      val (internalSuccs,externalSuccs) = succs.partition(ds.find(_) == cls)
-      internalSuccs.filter(marked.add(_)) foreach { addrs.enqueue(_) }
-      externalSuccs foreach { succ => updatedIn = deallocEdgeRef(addr,succ,updatedIn,toDealloc) }
-    }
-    updatedIn
+    RefCountingStore(updatedContent, updatedIn, updatedDs, Set.empty, updatedHc)
   }
+
+  private def decRefs(addrs: Iterable[Addr], currentIn: AddrCount, currentToCheck: Set[Addr]): (AddrCount, Set[Addr]) =
+    addrs.foldLeft((currentIn, currentToCheck)) { 
+        case ((accIn, accToCheck), addr) =>
+            val cls = ds.find(addr)
+            val (isGarbage, accIn2) = decRootRef(cls, accIn)
+            (accIn2, if (isGarbage) (accToCheck + cls) else accToCheck)
+    }
 
   def decRefs(addrs: Iterable[Addr]): RefCountingStore[Addr,Abs] = {
-
-    val toDelete = scala.collection.mutable.Queue[Addr]()
-    val toDealloc = scala.collection.mutable.Queue[Addr]()
-    val deallocated = scala.collection.mutable.Set[Addr]()
-
-    // For every addr in addrs:
-    // - decrement the reference count of the corresponding scc
-    // - if the SCC can be deallocated, enqueue it in toDealloc
-    var updatedIn = addrs.foldLeft(this.in)((acc, ref) => deallocRootRef(ref, acc, toDealloc))
-
-      // Deallocate a SCC in every iteration
-      while (toDealloc.nonEmpty) {
-        val cls = toDealloc.dequeue
-        if (deallocated.add(cls)) {
-          updatedIn = deallocSCC(cls, updatedIn, toDealloc, toDelete)
-        }
-      }
-
-    val updatedHc = toDelete.foldLeft(this.hc)((acc, ref) => acc - content(ref)._1.hashCode())
-    RefCountingStore(content -- toDelete, updatedIn -- toDelete, ds -- toDelete, updatedHc)
+    val (updatedIn, updatedToCheck) = decRefs(addrs, this.in, this.toCheck)
+    this.copy(in = updatedIn, toCheck = updatedToCheck)
   }
 
   def extend(adr: Addr, v: Abs): RefCountingStore[Addr,Abs] = content.get(adr) match {
@@ -124,7 +111,7 @@ extends Store[Addr,Abs] {
           if (urefs.contains(ref)) { acc } else { (detectCycle(adr, ref, acc._1), acc._2 + ref) }
         })
         val updatedContent = this.content + (adr -> (updatedVal, updatedRefs))
-        RefCountingStore(updatedContent, updatedIn, updatedDs, updatedHc)
+        RefCountingStore(updatedContent, updatedIn, updatedDs, toCheck, updatedHc)
   }
 
   private def detectCycle(from: Addr, to: Addr, current: (DisjointSet[Addr],AddrCount)): (DisjointSet[Addr],AddrCount) = {
@@ -192,7 +179,7 @@ extends Store[Addr,Abs] {
 
   override def hashCode = hc
 
-  /* DEBUGGING */
+  /* --- DEBUGGING --- */
 
   private def transclo(addrs: Set[Addr]): Set[Addr] = {
     var transclo = Set[Addr]()

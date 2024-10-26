@@ -1,4 +1,4 @@
-scalaVersion := (if (sys.props("java.specification.version") == "1.8") "2.12.3" else "2.11.11")
+scalaVersion := (if (sys.props("java.specification.version") == "1.8") "2.12.3" else "2.11.12")
 scalacOptions ++= Seq("-unchecked", "-deprecation", "-feature")
 
 logLevel := Level.Error 
