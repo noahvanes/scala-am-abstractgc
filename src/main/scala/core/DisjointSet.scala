@@ -1,5 +1,7 @@
 package core
 
+import scala.collection.mutable
+
 case class DisjointSet[A]
   (var tree: Map[A,A]   = Map[A,A]().withDefault(a => a),
    val rank: Map[A,Int] = Map[A,Int]().withDefaultValue(0),
@@ -62,5 +64,56 @@ case class DisjointSet[A]
   def allSets(): List[Set[A]] = {
     val perCls = tree.groupBy(p => find(p._1)).toList.map(_._2)
     perCls.map(m => m.keys.toSet ++ m.values.toSet)
+  }
+}
+
+// Adapted from https://gist.github.com/fbaierl/86df1072911de2a634696e7a819278fa
+object Tarjan {
+
+  /**
+    * The algorithm takes a directed graph as input and produces a partition of the graph's vertices into the graph's strongly connected components.
+    * @param nodes the nodes of the graph (as an Iterable)
+    * @param edges the edges of the graph (as a function)
+    * @param initialDs: [optional] the initial (default: empty) disjoint set of vertices
+    * @return the strongly connected components of g (as a DisjointSet)
+    */
+  def apply[A](nodes: Iterable[A], edges: A => Iterable[A], initialDs: DisjointSet[A] = DisjointSet()): DisjointSet[A] = {
+    var ds      = initialDs 
+    var s       = List.empty[A]
+    val s_set   = mutable.Set.empty[A]
+    val index   = mutable.Map.empty[A, Int]
+    val lowlink = mutable.Map.empty[A, Int]
+    // visiting a single node
+    def visit(v: A): Unit = {
+      val idx    = index.size
+      val len    = s_set.size 
+      index(v)   = idx
+      lowlink(v) = idx
+      s          = v :: s 
+      s_set      += v
+      for (w <- edges(v)) {
+        if (!index.contains(w)) {
+          visit(w)
+          lowlink(v) = math.min(lowlink(v), lowlink(w))
+        } else if (s_set(w)) {
+          lowlink(v) = math.min(lowlink(v), index(w))
+        }
+      }
+      if (lowlink(v) == index(v)) {
+        do {
+          val node = s.head 
+          s        = s.tail
+          s_set    -= node
+          ds       = ds.merge(node, v)
+        } while (s_set.size != len)
+      }
+    }
+    // start visiting from every node in the graph
+    for (v <- nodes) {
+      if (!index.contains(v)) 
+        visit(v)
+    }
+    // return the updated disjoint set 
+    ds
   }
 }
