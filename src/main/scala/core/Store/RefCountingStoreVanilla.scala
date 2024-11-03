@@ -118,7 +118,7 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
             }
             val updatedContent = this.content + (adr -> (v, CountOne, vrefs))
             this.copy(content = updatedContent, in = updatedIn2, toCheck = updatedToCheck, hc = updatedHc)
-        case Some((u, CountInfinity, urefs)) => // WEAK UPDATE
+        case Some((u, _, urefs)) => // WEAK UPDATE
             val vrefs = JoinLattice[Abs].references(v)
             val updatedVal = JoinLattice[Abs].join(u, v)
             val updatedHc = this.hc - u.hashCode() + updatedVal.hashCode()

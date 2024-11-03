@@ -53,7 +53,7 @@ object Main {
     cpstak,
     diviter,
     divrec,
-    destruc,
+    destruc
     //triangl,
     //puzzle,
     //takl,
@@ -61,11 +61,11 @@ object Main {
     // boyer,
     // deriv,
     // dderiv,
-    collatz,
-    gcipd,
-    primtest,
-    rsa,
-    nqueens
+    //collatz,
+    //gcipd,
+    //primtest,
+    //rsa,
+    //nqueens
   )
 
   /* -- SUPPORTING DEFINITIONS -- */

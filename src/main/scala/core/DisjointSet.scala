@@ -61,10 +61,12 @@ case class DisjointSet[A]
 
   // MARK: Debugging
 
-  def allSets(): List[Set[A]] = {
-    val perCls = tree.groupBy(p => find(p._1)).toList.map(_._2)
-    perCls.map(m => m.keys.toSet ++ m.values.toSet)
-  }
+  def roots(): Set[A] =
+    tree.filter { case (adr, par) => adr == par }
+        .keySet
+
+  def allSets(): Set[Set[A]] = 
+    roots().map(allOf(_).toSet)
 }
 
 // Adapted from https://gist.github.com/fbaierl/86df1072911de2a634696e7a819278fa
@@ -77,7 +79,7 @@ object Tarjan {
     * @param initialDs: [optional] the initial (default: empty) disjoint set of vertices
     * @return the strongly connected components of g (as a DisjointSet)
     */
-  def apply[A](nodes: Iterable[A], edges: A => Iterable[A], initialDs: DisjointSet[A] = DisjointSet()): DisjointSet[A] = {
+  def apply[A](nodes: Iterable[A], edges: A => Iterable[A], initialDs: DisjointSet[A] = DisjointSet[A]()): DisjointSet[A] = {
     var ds      = initialDs 
     var s       = List.empty[A]
     val s_set   = mutable.Set.empty[A]

@@ -3,6 +3,7 @@ import scalaz.Scalaz._
 import scalaz.Semigroup
 import Util.MapStrict
 import core.DisjointSet
+import core.Tarjan
 
 case class RefCountingStore[Addr:Address, Abs:JoinLattice]
   (content: Map[Addr,(Abs,Count,Set[Addr])],
@@ -220,4 +221,12 @@ extends Store[Addr,Abs] {
     }
     calculatedIn
   }
+
+  def calculatedDS() =
+    Tarjan.apply[Addr](content.keys, ref => content(ref)._3)
+
+  def checkDS() =
+    assert(calculatedDS().allSets() == ds.allSets())
+
+  checkDS()
 }
