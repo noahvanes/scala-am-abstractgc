@@ -5,7 +5,7 @@ import Util.MapStrict
 import core.DisjointSet
 
 case class RefCountingStore[Addr:Address, Abs:JoinLattice]
-  (content: Map[Addr,(Abs,Set[Addr])],
+  (content: Map[Addr,(Abs,Count,Set[Addr])],
         in: Map[Addr,(Int,Set[Addr])] = Map[Addr,(Int,Set[Addr])]().withDefaultValue(0,Set[Addr]()),
         ds: DisjointSet[Addr] = DisjointSet[Addr](),
    toCheck: Set[Addr] = Set[Addr](),
@@ -63,7 +63,7 @@ extends Store[Addr,Abs] {
         // DEALLOC THE SCC 
         val addrs = updatedDs.allOf(scc)
         addrs.foreach { addr => 
-          val (vlu, succs) = updatedContent(addr)
+          val (vlu, _, succs) = updatedContent(addr)
           updatedContent = updatedContent - addr 
           updatedHc = updatedHc - vlu.hashCode() 
           updatedIn = succs.toList.filterNot(updatedDs.find(_) == scc).foldLeft(updatedIn) { 
@@ -95,22 +95,26 @@ extends Store[Addr,Abs] {
   def extend(adr: Addr, v: Abs): RefCountingStore[Addr,Abs] = content.get(adr) match {
       case None =>
         val vrefs = JoinLattice[Abs].references(v)
-        val updatedContent = this.content + (adr -> (v, vrefs))
+        val updatedContent = this.content + (adr -> (v, CountOne, vrefs))
         val updatedIn = vrefs.foldLeft(this.in)((acc, ref) => {
           if (ref == adr) { acc } else { incEdgeRef(adr, ref, acc, this.ds) }
         })
         val updatedHc = this.hc + v.hashCode()
         this.copy(content = updatedContent, in = updatedIn, hc = updatedHc)
-      case Some((u, _)) if JoinLattice[Abs].subsumes(u, v) =>
-        this
-      case Some((u, urefs)) =>
+      case Some((u, count, urefs)) if JoinLattice[Abs].subsumes(u, v) =>
+          if (count == CountInfinity) {
+              this
+          } else {
+              this.copy(content = content + (adr -> (u, CountInfinity, urefs))) 
+          }
+      case Some((u, _, urefs)) =>
         val vrefs = JoinLattice[Abs].references(v)
         val updatedVal = JoinLattice[Abs].join(u, v)
         val updatedHc = this.hc - u.hashCode() + updatedVal.hashCode()
         val ((updatedDs, updatedIn), updatedRefs) = vrefs.foldLeft(((this.ds, this.in), urefs))((acc, ref) => {
           if (urefs.contains(ref)) { acc } else { (detectCycle(adr, ref, acc._1), acc._2 + ref) }
         })
-        val updatedContent = this.content + (adr -> (updatedVal, updatedRefs))
+        val updatedContent = this.content + (adr -> (updatedVal, CountInfinity, updatedRefs))
         RefCountingStore(updatedContent, updatedIn, updatedDs, toCheck, updatedHc)
   }
 
@@ -189,7 +193,7 @@ extends Store[Addr,Abs] {
       todo = todo.tail
       if(!transclo.contains(next)) {
         transclo += next
-        todo ++= content(next)._2
+        todo ++= content(next)._3
       }
     }
     transclo
@@ -205,7 +209,7 @@ extends Store[Addr,Abs] {
 
   def calcCounts(rootCounts: Map[Addr,Int]): AddrCount = {
     var calculatedIn = rootCounts.map(p => (p._1,(p._2,Set[Addr]()))).withDefaultValue((0,Set[Addr]()))
-    content foreach { case (adr,(_,refs)) =>
+    content foreach { case (adr,(_,_,refs)) =>
       refs foreach { ref =>
         val cls = ds.find(ref)
         if (!ds.equiv(cls,adr)) {
