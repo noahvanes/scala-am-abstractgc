@@ -608,15 +608,15 @@ class SchemePrimitives[Addr : Address, Abs : IsSchemeLattice] extends Primitives
           if (abs.isTrue(isint)) {
             val vaddr = Address[Addr].cell(fexp, t)
             abs.vector(vaddr, size, initaddr).map({ case (va, vector) =>
-              (va, store.extend(vaddr, vector).extend(initaddr, init), Set.empty)})
+              (va, store.extend(initaddr, init).extend(vaddr, vector), Set.empty)})
           } else {
             MayFailError(List(TypeError("make-vector", "first operand", "integer", size.toString)))
           })
       }
       args match {
-        case (_, size) :: Nil => createVec(size, abs.inject(false), Address[Addr].primitive("__undef-vec-element__"))
-        case (_, size) :: (initexp, init) :: Nil => createVec(size, init, Address[Addr].cell(initexp, t))
-        case l => MayFailError(List(ArityError(name, 1, l.size)))
+        case (_, size) :: Nil                     => createVec(size, abs.inject(false), Address[Addr].primitive("__undef-vec-element__"))
+        case (_, size) :: (initexp, init) :: Nil  => createVec(size, init, Address[Addr].cell(initexp, t))
+        case l                                    => MayFailError(List(ArityError(name, 1, l.size)))
       }
     }
   }

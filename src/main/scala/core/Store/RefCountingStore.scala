@@ -9,22 +9,24 @@ case class RefCountingStore[Addr:Address, Abs:JoinLattice]
   (content: Map[Addr,(Abs,Count,Set[Addr])],
         in: Map[Addr,(Int,Set[Addr])] = Map[Addr,(Int,Set[Addr])]().withDefaultValue(0,Set[Addr]()),
         ds: DisjointSet[Addr] = DisjointSet[Addr](),
+  rootRefs: Map[Addr, Int] = Map[Addr, Int]().withDefaultValue(0),
    toCheck: Set[Addr] = Set[Addr](),
         hc: Int = 0)
 extends Store[Addr,Abs] {
 
-  type AddrRefs = (Int,Set[Addr])
-  type AddrCount = Map[Addr,AddrRefs]
+  type AddrRefs  = (Int, Set[Addr])
+  type AddrCount = Map[Addr, AddrRefs]
+  type RootRefs  = Map[Addr, Int]
 
   def keys = content.keys
   def forall(p: ((Addr,Abs)) => Boolean) = content.forall(n => p(n._1,n._2._1))
   def lookup(a: Addr) = content.get(a).map(_._1)
   def lookupBot(a: Addr) = lookup(a).getOrElse(JoinLattice[Abs].bottom)
 
-  private def incRootRef(a: Addr, currentIn: AddrCount) = {
-    val cls = ds.find(a)
+  private def incRootRef(a: Addr, currentIn: AddrCount, currentDS: DisjointSet[Addr], n: Int = 1) = {
+    val cls = currentDS.find(a)
     val (counts, refs) = currentIn(cls)
-    currentIn + (cls -> (counts + 1, refs))
+    currentIn + (cls -> (counts + n, refs))
   }
 
   private def incEdgeRef(from: Addr, to: Addr, currentIn: AddrCount, currentDS: DisjointSet[Addr]) = {
@@ -33,8 +35,12 @@ extends Store[Addr,Abs] {
     currentIn + (cls -> (counts, refs + from))
   }
 
-  def incRefs(addrs: Iterable[Addr]): RefCountingStore[Addr,Abs] =
-    this.copy(in = addrs.foldLeft(in)((acc,ref) => incRootRef(ref, acc)))
+  def incRefs(addrs: Iterable[Addr]): RefCountingStore[Addr,Abs] = {
+    val (updatedIn, updatedRoots) = addrs.foldLeft((this.in, this.rootRefs)) {
+      case ((accIn, accRefs), ref) => (incRootRef(ref, accIn, this.ds), accRefs + (ref -> (accRefs(ref) + 1))) 
+    }
+    this.copy(in = updatedIn, rootRefs = updatedRoots)
+  }
 
   private def decRef(update: AddrRefs => AddrRefs, cls: Addr, currentIn: AddrCount): (Boolean, AddrCount) = {
     val current = currentIn(cls)
@@ -52,6 +58,36 @@ extends Store[Addr,Abs] {
   private def decEdgeRef(from: Addr, to: Addr, currentIn: AddrCount): (Boolean, AddrCount)
     = decRef({ case (counts,refs) => (counts,refs-from) }, to, currentIn)
 
+  private def decRootRefs(addrs: Iterable[Addr], currentIn: AddrCount, currentRoots: RootRefs, currentToCheck: Set[Addr]): (AddrCount, RootRefs, Set[Addr]) =
+    addrs.foldLeft((currentIn, currentRoots, currentToCheck)) { 
+        case ((accIn, accRoots, accToCheck), addr) =>
+            val cls = ds.find(addr)
+            val (isGarbage, accIn2) = decRootRef(cls, accIn)
+            (accIn2, remRootRef(addr, accRoots), if (isGarbage) (accToCheck + cls) else accToCheck)
+    }
+
+  private def decEdgeRefs(from: Addr, addrs: Iterable[Addr], currentIn: AddrCount, currentToCheck: Set[Addr]): (AddrCount, Set[Addr]) =
+    addrs.foldLeft((currentIn, currentToCheck)) { 
+        case ((accIn, accToCheck), addr) =>
+            val cls = ds.find(addr)
+            val (isGarbage, accIn2) = decEdgeRef(from, cls, accIn)
+            (accIn2, if (isGarbage) (accToCheck + cls) else accToCheck)
+    }
+
+  private def remRootRef(addr: Addr, currentRefs: RootRefs): RootRefs = {
+    val updated = currentRefs(addr) - 1
+    if (updated == 0) {
+      currentRefs - addr 
+    } else {
+      currentRefs + (addr -> updated)
+    }
+  }
+
+  def decRefs(addrs: Iterable[Addr]): RefCountingStore[Addr,Abs] = {
+    val (updatedIn, updatedRoots, updatedToCheck) = decRootRefs(addrs, this.in, this.rootRefs, this.toCheck)
+    this.copy(in = updatedIn, rootRefs = updatedRoots, toCheck = updatedToCheck)
+  }
+
   def collect(): RefCountingStore[Addr,Abs] = {
     var toDealloc       = toCheck.filterNot(scc => in.contains(scc)).toList 
     var updatedContent  = this.content 
@@ -66,10 +102,10 @@ extends Store[Addr,Abs] {
         addrs.foreach { addr => 
           val (vlu, _, succs) = updatedContent(addr)
           updatedContent = updatedContent - addr 
-          updatedHc = updatedHc - vlu.hashCode() 
-          updatedIn = succs.toList.filterNot(updatedDs.find(_) == scc).foldLeft(updatedIn) { 
-            (accIn, succ) =>
-              val cls = updatedDs.find(succ)
+          updatedHc = updatedHc - vlu.hashCode()
+          val clss = succs.map(updatedDs.find(_)) - scc 
+          updatedIn = clss.foldLeft(updatedIn) { 
+            (accIn, cls) =>
               val (isGarbage, accIn2) = decEdgeRef(addr, cls, accIn)
               if (isGarbage) { toDealloc = cls :: toDealloc }
               accIn2
@@ -77,20 +113,9 @@ extends Store[Addr,Abs] {
         }  
         updatedDs = updatedDs -- addrs
     }
-    RefCountingStore(updatedContent, updatedIn, updatedDs, Set.empty, updatedHc)
-  }
-
-  private def decRefs(addrs: Iterable[Addr], currentIn: AddrCount, currentToCheck: Set[Addr]): (AddrCount, Set[Addr]) =
-    addrs.foldLeft((currentIn, currentToCheck)) { 
-        case ((accIn, accToCheck), addr) =>
-            val cls = ds.find(addr)
-            val (isGarbage, accIn2) = decRootRef(cls, accIn)
-            (accIn2, if (isGarbage) (accToCheck + cls) else accToCheck)
-    }
-
-  def decRefs(addrs: Iterable[Addr]): RefCountingStore[Addr,Abs] = {
-    val (updatedIn, updatedToCheck) = decRefs(addrs, this.in, this.toCheck)
-    this.copy(in = updatedIn, toCheck = updatedToCheck)
+    val res = RefCountingStore(updatedContent, updatedIn, updatedDs, rootRefs, Set.empty, updatedHc)
+    res.checkNoEmptyRefs()
+    res 
   }
 
   def extend(adr: Addr, v: Abs): RefCountingStore[Addr,Abs] = content.get(adr) match {
@@ -116,8 +141,75 @@ extends Store[Addr,Abs] {
           if (urefs.contains(ref)) { acc } else { (detectCycle(adr, ref, acc._1), acc._2 + ref) }
         })
         val updatedContent = this.content + (adr -> (updatedVal, CountInfinity, updatedRefs))
-        RefCountingStore(updatedContent, updatedIn, updatedDs, toCheck, updatedHc)
+        RefCountingStore(updatedContent, updatedIn, updatedDs, rootRefs, toCheck, updatedHc)
   }
+
+  def update(adr: Addr, v: Abs): RefCountingStore[Addr,Abs] = extend(adr, v)
+
+  def update2(adr: Addr, v: Abs): RefCountingStore[Addr,Abs] =
+    content.get(adr) match {
+        case None => 
+            throw new RuntimeException("Updating store at an adress not used")
+        case Some((u, CountOne, urefs)) => // STRONG UPDATE 
+            val vrefs = JoinLattice[Abs].references(v)
+            val updatedHc = this.hc - u.hashCode() + v.hashCode()
+            val updatedContent = this.content + (adr -> (v, CountOne, vrefs))
+            val removedRefs = urefs -- vrefs 
+            val addedRefs = vrefs -- urefs
+            lazy val scc = ds.find(adr)
+            lazy val addrs = ds.allOf(scc).toSet
+            // updating DS and IN
+            var updatedDs = this.ds
+            var updatedIn = this.in
+            val (in2, updatedToCheck) = decEdgeRefs(adr, removedRefs, updatedIn, toCheck)
+            updatedIn = in2
+            if (removedRefs.exists(updatedDs.find(_) == scc) && addrs.size > 1) {
+              updatedDs = updatedDs -- addrs
+              updatedDs = Tarjan(addrs, ref => updatedContent(ref)._3.filter(addrs), updatedDs) 
+              println(s"$addrs was split into ${addrs.map(addr => updatedDs.allOf(updatedDs.find(addr)))}")
+              // external refs
+              val (_, sccRefs) = updatedIn(scc)
+              updatedIn = updatedIn - scc
+              sccRefs.foreach { ref =>
+                updatedContent(ref)._3
+                                   .filter(addrs)
+                                   .foreach { a => updatedIn = incEdgeRef(ref, a, updatedIn, updatedDs) }
+              }
+              addrs.foreach { addr => 
+                rootRefs.get(addr).foreach { count => 
+                  updatedIn = incRootRef(addr, updatedIn, updatedDs, count)
+                }
+              }
+              // internal refs
+              addrs.foreach { addr =>
+                val addrCls = updatedDs.find(addr)
+                updatedContent(addr)._3.filter(addrs).filter(updatedDs.find(_) != addrCls).foreach { ref => 
+                  updatedIn = incEdgeRef(addr, ref, updatedIn, updatedDs)
+                }
+              }
+            }
+            addedRefs.foreach { to => 
+              val updated = detectCycle(adr, to, (updatedDs, updatedIn))
+              updatedDs = updated._1
+              updatedIn = updated._2  
+            }
+            RefCountingStore(updatedContent, updatedIn, updatedDs, rootRefs, updatedToCheck, updatedHc)
+        case Some((u, _, urefs)) => // WEAK UPDATE
+            val vrefs = JoinLattice[Abs].references(v)
+            val updatedVal = JoinLattice[Abs].join(u, v)
+            val updatedHc = this.hc - u.hashCode() + updatedVal.hashCode()
+            val ((updatedDs, updatedIn), updatedRefs) = vrefs.foldLeft(((this.ds, this.in), urefs))((acc, ref) => {
+              if (urefs.contains(ref)) { acc } else { (detectCycle(adr, ref, acc._1), acc._2 + ref) }
+            })
+            val updatedContent = this.content + (adr -> (updatedVal, CountInfinity, updatedRefs))
+            RefCountingStore(updatedContent, updatedIn, updatedDs, rootRefs, toCheck, updatedHc) 
+    }
+
+  def updateOrExtend(a: Addr, v: Abs): RefCountingStore[Addr,Abs] = 
+    content.get(a) match {
+      case None    => extend(a, v)
+      case Some(_) => update(a, v)
+    }
 
   private def detectCycle(from: Addr, to: Addr, current: (DisjointSet[Addr],AddrCount)): (DisjointSet[Addr],AddrCount) = {
 
@@ -126,27 +218,33 @@ extends Store[Addr,Abs] {
       return current
     }
 
-    val (currentDs, currentIn) = current
-    var updatedDs = currentDs
-    var incomingRoots = 0
-    var incomingRefs = Set[Addr]()
-    var visited = Set[Addr]()
+    val (currentDs, currentIn) = current 
+    val initialTarget = currentDs.find(to)
+    val (roots, refs) = currentIn(initialTarget)
 
-    val target = currentDs.find(to)
+    var updatedDs     = currentDs
+    var updatedIn     = currentIn
+    var target        = initialTarget
+    var incomingRoots = roots
+    var incomingRefs  = refs
+    var visited       = Set[Addr]()
+
     def reachable(current: Addr): Boolean = {
-      val cls = currentDs.find(current)
+      val cls = updatedDs.find(current)
       if (cls == target) {
         true
       } else if (visited(cls)) {
-        updatedDs.equiv(cls, target)
+        false
       } else {
         visited = visited + cls
-        val (count,refs) = currentIn(cls)
+        val (count, refs) = updatedIn(cls)
         val (canReach, cantReach) = refs.partition(reachable)
         if (canReach.nonEmpty) {  // current node can reach target
-          updatedDs = updatedDs.merge(cls, target)
-          incomingRefs = incomingRefs ++ cantReach
+          updatedIn     = updatedIn - cls
+          incomingRefs  = incomingRefs ++ cantReach
           incomingRoots = incomingRoots + count
+          updatedDs     = updatedDs.union(cls, target)
+          target        = updatedDs.find(to)
           true
         } else {                  // current node can't reach target
           false
@@ -155,19 +253,13 @@ extends Store[Addr,Abs] {
     }
 
     if (reachable(from)) {
-      val updatedCls = updatedDs.find(target)
-      val (extraCount,extraRefs) = currentIn(target)
-      val updatedCounts = incomingRoots + extraCount
-      val updatedRefs = incomingRefs ++ extraRefs
-      val updatedIn = currentIn + (updatedCls -> (updatedCounts, updatedRefs))
+      updatedIn = updatedIn - initialTarget 
+      updatedIn = updatedIn + (target -> (incomingRoots, incomingRefs))
       (updatedDs, updatedIn)
     } else {
-      (currentDs, incEdgeRef(from,to,currentIn,currentDs))
+      (updatedDs, incEdgeRef(from,to,updatedIn,updatedDs))
     }
   }
-
-  def update(a: Addr, v: Abs): RefCountingStore[Addr,Abs] = extend(a,v)
-  def updateOrExtend(a: Addr, v: Abs): RefCountingStore[Addr,Abs] = extend(a,v)
 
   /* TODO */
 
@@ -208,10 +300,15 @@ extends Store[Addr,Abs] {
     unmarked.keys.toSet
   }
 
-  def calcCounts(rootCounts: Map[Addr,Int]): AddrCount = {
-    var calculatedIn = rootCounts.map(p => (p._1,(p._2,Set[Addr]()))).withDefaultValue((0,Set[Addr]()))
-    content foreach { case (adr,(_,_,refs)) =>
-      refs foreach { ref =>
+  def calcCounts(): AddrCount = {
+    var calculatedIn = rootRefs.foldLeft(Map[Addr, (Int, Set[Addr])]().withDefaultValue((0,Set[Addr]()))) {
+      case (acc, (adr, count)) => 
+        val cls = ds.find(adr)
+        val (curCount, curRefs) = acc(cls)
+        acc + (cls -> ((curCount + count, curRefs)))
+    }
+    content.foreach { case (adr,(_,_,refs)) =>
+      refs.foreach { ref =>
         val cls = ds.find(ref)
         if (!ds.equiv(cls,adr)) {
           val (counts, rr) = calculatedIn(cls)
@@ -223,10 +320,66 @@ extends Store[Addr,Abs] {
   }
 
   def calculatedDS() =
-    Tarjan.apply[Addr](content.keys, ref => content(ref)._3)
+    Tarjan[Addr](content.keys, ref => content.get(ref).map(_._3).getOrElse(Set.empty))
 
   def checkDS() =
     assert(calculatedDS().allSets() == ds.allSets())
 
-  checkDS()
+  def checkOnlyRoots() =
+    in.keySet.foreach { adr => 
+      if (ds.find(adr) != adr) {
+        throw new RuntimeException(s"Address $adr is not a root address and has references registered")
+      }
+    }
+
+  def checkNotContainSelf() = {
+    in.foreach { case (adr,(_,refs)) => 
+      refs.foreach { ref =>
+        if (ds.find(ref) == adr) {
+          throw new Exception(s"Address $adr has a reference $ref of the same SCC")
+        }
+      }
+    }
+  }
+
+  def checkContent() =
+    content.foreach { case (adr, (v, _, refs)) =>
+      assert(JoinLattice[Abs].references(v) == refs)
+    }
+
+  def checkIn() = {
+    val calc = calcCounts()
+    if (calc != in) {
+      println(calcDiff(calc,in))
+      throw new RuntimeException("failed!")
+    }
+  }
+
+  def checkNoEmptyRefs() = 
+    content.foreach { case (adr, (v, _, refs)) =>
+      refs.foreach { ref =>
+        if (!content.contains(ref)) {
+          throw new RuntimeException(s"Address $ref has no binding but is referenced from $adr (value: $v)")
+        }
+      }
+    }
+
+  private def calcDiff[K,V](map1: Map[K,V], map2: Map[K,V]): Map[K,(Option[V],Option[V])] = {
+    val allKeys = map1.keySet ++ map2.keySet
+    allKeys.foldLeft(Map[K,(Option[V],Option[V])]()) {
+      (acc, k) =>
+        if (map1.get(k) != map2.get(k)) {
+          acc + (k -> ((map1.get(k), map2.get(k))))
+        } else {
+          acc
+        }
+    }
+  }
+
+  //checkNoEmptyRefs()
+  //checkContent()
+  //checkNotContainSelf()
+  //checkDS()
+  //checkOnlyRoots()
+  //checkIn()
 }

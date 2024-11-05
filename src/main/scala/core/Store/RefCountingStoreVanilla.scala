@@ -48,15 +48,22 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
   private def decEdgeRef(from: Addr, to: Addr, currentIn: AddrCount): (Boolean, AddrCount)
      = decRef({ case (counts,refs) => (counts,refs-from) }, to, currentIn)
 
-  private def decRefs(addrs: Iterable[Addr], currentIn: AddrCount, currentToCheck: Set[Addr]): (AddrCount, Set[Addr]) =
+  private def decRootRefs(addrs: Iterable[Addr], currentIn: AddrCount, currentToCheck: Set[Addr]): (AddrCount, Set[Addr]) =
     addrs.foldLeft((currentIn, currentToCheck)) { 
         case ((accIn, accToCheck), addr) =>
             val (isGarbage, accIn2) = decRootRef(addr, accIn)
             (accIn2, if (isGarbage) (accToCheck + addr) else accToCheck)
     }
 
+  private def decEdgeRefs(from: Addr, addrs: Iterable[Addr], currentIn: AddrCount, currentToCheck: Set[Addr]): (AddrCount, Set[Addr]) =
+    addrs.foldLeft((currentIn, currentToCheck)) { 
+        case ((accIn, accToCheck), addr) =>
+            val (isGarbage, accIn2) = decEdgeRef(from, addr, accIn)
+            (accIn2, if (isGarbage) (accToCheck + addr) else accToCheck)
+    }
+
   def decRefs(addrs: Iterable[Addr]): RefCountingStoreVanilla[Addr,Abs] = {
-    val (updatedIn, updatedToCheck) = decRefs(addrs, this.in, this.toCheck)
+    val (updatedIn, updatedToCheck) = decRootRefs(addrs, this.in, this.toCheck)
     this.copy(in = updatedIn, toCheck = updatedToCheck)
   }
 
@@ -112,7 +119,7 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
         case Some((u, CountOne, urefs)) => // STRONG UPDATE
             val vrefs = JoinLattice[Abs].references(v)
             val updatedHc = this.hc - u.hashCode() + v.hashCode()
-            val (updatedIn, updatedToCheck) = decRefs(urefs -- vrefs, this.in, this.toCheck)
+            val (updatedIn, updatedToCheck) = decEdgeRefs(adr, urefs -- vrefs, this.in, this.toCheck)
             val updatedIn2 = vrefs.foldLeft(updatedIn) { (acc, ref) => 
                 if (urefs.contains(ref)) { acc } else { incEdgeRef(adr, ref, acc) }    
             }

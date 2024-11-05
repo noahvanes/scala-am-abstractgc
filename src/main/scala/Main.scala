@@ -50,17 +50,17 @@ object Main {
 
   // configure which benchmarks to run (uncomment to include; using the same names as in the paper)
   private val BENCHMARK_PROGRAMS = List(
-    cpstak,
-    diviter,
-    divrec,
-    destruc
+    //cpstak,
+    //diviter,
+    //divrec,
+    //destruc,
     //triangl,
     //puzzle,
     //takl,
-    // browse,
-    // boyer,
-    // deriv,
-    // dderiv,
+    browse
+    //boyer,
+    //deriv,
+    //dderiv,
     //collatz,
     //gcipd,
     //primtest,
