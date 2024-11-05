@@ -92,8 +92,8 @@ extends Store[Addr,Abs] {
     var toDealloc       = toCheck.filterNot(scc => in.contains(scc)).toList 
     var updatedContent  = this.content 
     var updatedIn       = this.in 
-    var updatedDs       = this.ds 
     var updatedHc       = this.hc 
+    var updatedDs       = this.ds 
     while (toDealloc.nonEmpty) {
         val scc = toDealloc.head
         toDealloc = toDealloc.tail 
@@ -103,19 +103,17 @@ extends Store[Addr,Abs] {
           val (vlu, _, succs) = updatedContent(addr)
           updatedContent = updatedContent - addr 
           updatedHc = updatedHc - vlu.hashCode()
-          val clss = succs.map(updatedDs.find(_)) - scc 
-          updatedIn = clss.foldLeft(updatedIn) { 
+          val sccs = succs.map(ds.find(_)) - scc 
+          updatedIn = sccs.foldLeft(updatedIn) { 
             (accIn, cls) =>
               val (isGarbage, accIn2) = decEdgeRef(addr, cls, accIn)
               if (isGarbage) { toDealloc = cls :: toDealloc }
               accIn2
           }
-        }  
-        updatedDs = updatedDs -- addrs
+        }
+        updatedDs = updatedDs -- addrs  
     }
-    val res = RefCountingStore(updatedContent, updatedIn, updatedDs, rootRefs, Set.empty, updatedHc)
-    res.checkNoEmptyRefs()
-    res 
+    RefCountingStore(updatedContent, updatedIn, updatedDs, rootRefs, Set.empty, updatedHc)
   }
 
   def extend(adr: Addr, v: Abs): RefCountingStore[Addr,Abs] = content.get(adr) match {
@@ -144,9 +142,9 @@ extends Store[Addr,Abs] {
         RefCountingStore(updatedContent, updatedIn, updatedDs, rootRefs, toCheck, updatedHc)
   }
 
-  def update(adr: Addr, v: Abs): RefCountingStore[Addr,Abs] = extend(adr, v)
+  //def update(adr: Addr, v: Abs): RefCountingStore[Addr,Abs] = extend(adr, v)
 
-  def update2(adr: Addr, v: Abs): RefCountingStore[Addr,Abs] =
+  def update(adr: Addr, v: Abs): RefCountingStore[Addr,Abs] =
     content.get(adr) match {
         case None => 
             throw new RuntimeException("Updating store at an adress not used")
@@ -377,9 +375,9 @@ extends Store[Addr,Abs] {
   }
 
   //checkNoEmptyRefs()
-  //checkContent()
-  //checkNotContainSelf()
-  //checkDS()
-  //checkOnlyRoots()
-  //checkIn()
+  checkContent()
+  checkNotContainSelf()
+  checkDS()
+  checkOnlyRoots()
+  checkIn()
 }
