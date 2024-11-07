@@ -89,7 +89,7 @@ extends Store[Addr,Abs] {
   }
 
   def collect(): RefCountingStore[Addr,Abs] = {
-    var toDealloc       = toCheck.filterNot(scc => in.contains(scc)).toList 
+    var toDealloc       = toCheck.map(ds.find).filterNot(in.contains).toList 
     var updatedContent  = this.content 
     var updatedIn       = this.in 
     var updatedHc       = this.hc 
@@ -142,8 +142,6 @@ extends Store[Addr,Abs] {
         RefCountingStore(updatedContent, updatedIn, updatedDs, rootRefs, toCheck, updatedHc)
   }
 
-  //def update(adr: Addr, v: Abs): RefCountingStore[Addr,Abs] = extend(adr, v)
-
   def update(adr: Addr, v: Abs): RefCountingStore[Addr,Abs] =
     content.get(adr) match {
         case None => 
@@ -153,27 +151,34 @@ extends Store[Addr,Abs] {
             val updatedHc = this.hc - u.hashCode() + v.hashCode()
             val updatedContent = this.content + (adr -> (v, CountOne, vrefs))
             val removedRefs = urefs -- vrefs 
-            val addedRefs = vrefs -- urefs
+            val addedRefs   = vrefs -- urefs
+            // updating DS and IN
             lazy val scc = ds.find(adr)
             lazy val addrs = ds.allOf(scc).toSet
-            // updating DS and IN
             var updatedDs = this.ds
             var updatedIn = this.in
-            val (in2, updatedToCheck) = decEdgeRefs(adr, removedRefs, updatedIn, toCheck)
-            updatedIn = in2
+            var updatedToCheck = this.toCheck
+            // 1) remove references in other components () 
+            val updatedRem = decEdgeRefs(adr, removedRefs, updatedIn, updatedToCheck)
+            updatedIn      = updatedRem._1
+            updatedToCheck = updatedRem._2
+            // 2) check removed references inside the SCC
             if (removedRefs.exists(updatedDs.find(_) == scc) && addrs.size > 1) {
               updatedDs = updatedDs -- addrs
               updatedDs = Tarjan(addrs, ref => updatedContent(ref)._3.filter(addrs), updatedDs) 
-              println(s"$addrs was split into ${addrs.map(addr => updatedDs.allOf(updatedDs.find(addr)))}")
-              // external refs
+              if (updatedToCheck.contains(scc)) {
+                updatedToCheck -= scc
+                updatedToCheck ++= addrs.map(updatedDs.find)
+              }
+              // external refs ...
               val (_, sccRefs) = updatedIn(scc)
-              updatedIn = updatedIn - scc
-              sccRefs.foreach { ref =>
+              updatedIn -= scc
+              sccRefs.foreach { ref =>   // ... from other addresses
                 updatedContent(ref)._3
                                    .filter(addrs)
                                    .foreach { a => updatedIn = incEdgeRef(ref, a, updatedIn, updatedDs) }
               }
-              addrs.foreach { addr => 
+              addrs.foreach { addr =>   // ... from the roots
                 rootRefs.get(addr).foreach { count => 
                   updatedIn = incRootRef(addr, updatedIn, updatedDs, count)
                 }
@@ -186,10 +191,11 @@ extends Store[Addr,Abs] {
                 }
               }
             }
+            // 3) add new references 
             addedRefs.foreach { to => 
-              val updated = detectCycle(adr, to, (updatedDs, updatedIn))
-              updatedDs = updated._1
-              updatedIn = updated._2  
+              val updatedAdd = detectCycle(adr, to, (updatedDs, updatedIn))
+              updatedDs      = updatedAdd._1
+              updatedIn      = updatedAdd._2  
             }
             RefCountingStore(updatedContent, updatedIn, updatedDs, rootRefs, updatedToCheck, updatedHc)
         case Some((u, _, urefs)) => // WEAK UPDATE
@@ -374,7 +380,13 @@ extends Store[Addr,Abs] {
     }
   }
 
+  private def checkHashCode() =
+    if (this.content.values.map(_._1.hashCode).sum != this.hc) {
+      throw new RuntimeException("Hashcode mismatch")
+    }
+
   //checkNoEmptyRefs()
+  checkHashCode()
   checkContent()
   checkNotContainSelf()
   checkDS()
