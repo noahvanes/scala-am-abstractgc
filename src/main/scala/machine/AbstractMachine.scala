@@ -86,7 +86,7 @@ abstract class EvalKontMachine[Exp : Expression, Abs : JoinLattice, Addr : Addre
   /**
    * The control component of the machine
    */
-  trait Control {
+  sealed trait Control {
     def subsumes(that: Control): Boolean
     val references: Set[Addr]
   }

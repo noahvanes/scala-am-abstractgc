@@ -162,10 +162,10 @@ class MachineAAMARCplusplus[Exp : Expression, Abs : JoinLattice, Addr : Address,
   }
 
   def eval(exp: Exp, sem: Semantics[Exp, Abs, Addr, Time], graph: Boolean, timeout: Timeout): Output = {
-    val s0 = State.inject(exp, Iterable.empty, sem.initialStore)
-    val worklist = scala.collection.mutable.Queue[State](s0)
-    val visited = scala.collection.mutable.Set[State]()
-    var halted = Set[State]()
+    val s0           = State.inject(exp, Iterable.empty, sem.initialStore)
+    val worklist     = scala.collection.mutable.Queue[State](s0)
+    val visited      = scala.collection.mutable.Set[State]()
+    var halted       = Set[State]()
     var currentGraph = Graph.empty[State,Unit,Unit]
     while (!(timeout.reached || worklist.isEmpty)) {
       val s = worklist.dequeue
