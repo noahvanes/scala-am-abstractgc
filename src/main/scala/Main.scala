@@ -20,10 +20,10 @@ object Main {
                                                       // (NOTE: to avoid the impact of graph construction on performance, the graph will be generated after the actual benchmark measurements)
 
   // configure benchmark parameters
-  private val MAX_WARMUP_RUNS    = 50      // maximum number of warmup runs per benchmark program
-  private val MAX_WARMUP_TIME    = 60      // maximum total time spent on warmup (in seconds) per benchmark program
-  private val NUMBER_OF_TRIALS   = 100    // number of trials/measurements per benchmark program
-  private val MAX_TIME_PER_TRIAL = 180     // timeout per trial (in seconds)
+  private val MAX_WARMUP_RUNS    = 100      // maximum number of warmup runs per benchmark program
+  private val MAX_WARMUP_TIME    = 120      // maximum total time spent on warmup (in seconds) per benchmark program
+  private val NUMBER_OF_TRIALS   = 30     // number of trials/measurements per benchmark program
+  private val MAX_TIME_PER_TRIAL = 1800    // timeout per trial (in seconds)
                                           // NOTE: as memory usage increases throughout a trial, higher values of MAX_TIME_PER_TRIAL might cause out-of-memory exceptions
 
   // congifure context-sensitivity of the analysis
@@ -40,31 +40,31 @@ object Main {
 
   // configure which abstract interpreters / machines to compare in the benchmarks
   private val ABSTRACT_MACHINES = List(
-  //  machineAAM,                 // uncomment to include an abstract interpreter without abstract GC (i.e., \rightarrow in the paper)
-  //machineAAMGC,                // uncomment to include an abstract interpreter with abstract tracing GC at every step (i.e., \rightarrow_{\Gamma} in the paper)
-  //machineAAMGCAlt,            // uncomment to include an abstract interpreter which performs abstract tracing GC at every join operation in the store (i.e., \rightarrow_{\GammaCFA} in the paper)
-  // machineAAMARC              // uncomment to include an abstract interpreter which performs abstract reference counting without cycle detection (i.e., \rightarrow_{arc} in the paper)
-  //  machineAAMARCplus,          // uncomment to include an abstract interpreter which performs abstract reference counting with only cycle detection in the kontinuation store (i.e., \rightarrow_{arc+} in the paper)
-   machineAAMARCplusplus        // the abstract interpreter which performs abstract reference counting with full cycle detection (i.e., \rightarrow_{arc++} in the paper)
+    machineAAM,                 // uncomment to include an abstract interpreter without abstract GC (i.e., \rightarrow in the paper)
+    machineAAMGC,                // uncomment to include an abstract interpreter with abstract tracing GC at every step (i.e., \rightarrow_{\Gamma} in the paper)
+    machineAAMGCAlt,            // uncomment to include an abstract interpreter which performs abstract tracing GC at every join operation in the store (i.e., \rightarrow_{\GammaCFA} in the paper)
+    machineAAMARC,             // uncomment to include an abstract interpreter which performs abstract reference counting without cycle detection (i.e., \rightarrow_{arc} in the paper)
+    machineAAMARCplus,          // uncomment to include an abstract interpreter which performs abstract reference counting with only cycle detection in the kontinuation store (i.e., \rightarrow_{arc+} in the paper)
+    machineAAMARCplusplus        // the abstract interpreter which performs abstract reference counting with full cycle detection (i.e., \rightarrow_{arc++} in the paper)
   )
 
   // configure which benchmarks to run (uncomment to include; using the same names as in the paper)
   private val BENCHMARK_PROGRAMS = List(
-    //cpstak,
-    //diviter,
-    //divrec,
+    cpstak,
+    diviter,
+    divrec,
     destruc,
-    //triangl,
+    triangl,
     puzzle,
-    //takl,
-    //browse,
-    //boyer,
-    //deriv,
-    //dderiv,
-    //collatz,
-    //gcipd,
-    //primtest
-    //rsa
+    takl,
+    browse,
+    boyer,
+    deriv,
+    dderiv,
+    collatz,
+    gcipd,
+    primtest,
+    rsa,
     nqueens
   )
 

@@ -48,3 +48,4 @@
 .idea/vcs.xml
 .metals
 .bloop
+./metals/*
