@@ -103,7 +103,7 @@ extends Store[Addr,Abs] {
           val (vlu, _, succs) = updatedContent(addr)
           updatedContent = updatedContent - addr 
           updatedHc = updatedHc - vlu.hashCode()
-          val sccs = succs.map(ds.find(_)) - scc 
+          val sccs = succs.map(ds.find) - scc 
           updatedIn = sccs.foldLeft(updatedIn) { 
             (accIn, cls) =>
               val (isGarbage, accIn2) = decEdgeRef(addr, cls, accIn)
@@ -135,9 +135,10 @@ extends Store[Addr,Abs] {
         val vrefs = JoinLattice[Abs].references(v)
         val updatedVal = JoinLattice[Abs].join(u, v)
         val updatedHc = this.hc - u.hashCode() + updatedVal.hashCode()
-        val ((updatedDs, updatedIn), updatedRefs) = vrefs.foldLeft(((this.ds, this.in), urefs))((acc, ref) => {
-          if (urefs.contains(ref)) { acc } else { (detectCycle(adr, ref, acc._1), acc._2 + ref) }
-        })
+        val ((updatedDs, updatedIn), updatedRefs) = vrefs.foldLeft(((this.ds, this.in), urefs)) { 
+          (acc, ref) =>
+            if (urefs.contains(ref)) { acc } else { (detectCycle(adr, ref, acc._1), acc._2 + ref) }
+        }
         val updatedContent = this.content + (adr -> (updatedVal, CountInfinity, updatedRefs))
         RefCountingStore(updatedContent, updatedIn, updatedDs, rootRefs, toCheck, updatedHc)
   }
@@ -158,12 +159,14 @@ extends Store[Addr,Abs] {
             var updatedDs = this.ds
             var updatedIn = this.in
             var updatedToCheck = this.toCheck
-            // 1) remove references in other components () 
-            val updatedRem = decEdgeRefs(adr, removedRefs, updatedIn, updatedToCheck)
+            // 1) removed references
+            val (internalRemRefs, externalRemRefs) = removedRefs.partition(updatedDs.find(_) == scc)
+            //// 1a) internal
+            val updatedRem = decEdgeRefs(adr, externalRemRefs, updatedIn, updatedToCheck)
             updatedIn      = updatedRem._1
             updatedToCheck = updatedRem._2
-            // 2) check removed references inside the SCC
-            if (removedRefs.exists(updatedDs.find(_) == scc) && addrs.size > 1) {
+            //// 1b) check removed references inside the SCC
+            if (internalRemRefs.nonEmpty && addrs.size > 1) {
               updatedDs = updatedDs -- addrs
               updatedDs = Tarjan(addrs, ref => updatedContent(ref)._3.filter(addrs), updatedDs) 
               if (updatedToCheck.contains(scc)) {
@@ -190,6 +193,10 @@ extends Store[Addr,Abs] {
                   updatedIn = incEdgeRef(addr, ref, updatedIn, updatedDs)
                 }
               }
+              // remove addresses that end up with no references anymore
+              addrs.map(updatedDs.find).foreach { cls => 
+                if (!updatedIn.contains(cls)) { updatedToCheck += cls }
+              }
             }
             // 3) add new references 
             addedRefs.foreach { to => 
@@ -202,9 +209,10 @@ extends Store[Addr,Abs] {
             val vrefs = JoinLattice[Abs].references(v)
             val updatedVal = JoinLattice[Abs].join(u, v)
             val updatedHc = this.hc - u.hashCode() + updatedVal.hashCode()
-            val ((updatedDs, updatedIn), updatedRefs) = vrefs.foldLeft(((this.ds, this.in), urefs))((acc, ref) => {
-              if (urefs.contains(ref)) { acc } else { (detectCycle(adr, ref, acc._1), acc._2 + ref) }
-            })
+            val ((updatedDs, updatedIn), updatedRefs) = vrefs.foldLeft(((this.ds, this.in), urefs)) { 
+              (acc, ref) =>
+                if (urefs.contains(ref)) { acc } else { (detectCycle(adr, ref, acc._1), acc._2 + ref) }
+            }
             val updatedContent = this.content + (adr -> (updatedVal, CountInfinity, updatedRefs))
             RefCountingStore(updatedContent, updatedIn, updatedDs, rootRefs, toCheck, updatedHc) 
     }
@@ -354,7 +362,7 @@ extends Store[Addr,Abs] {
   def checkIn() = {
     val calc = calcCounts()
     if (calc != in) {
-      println(calcDiff(calc,in))
+      println(Differ.calcDiff(calc,in))
       throw new RuntimeException("failed!")
     }
   }
@@ -368,7 +376,32 @@ extends Store[Addr,Abs] {
       }
     }
 
-  private def calcDiff[K,V](map1: Map[K,V], map2: Map[K,V]): Map[K,(Option[V],Option[V])] = {
+  private def checkHashCode() =
+    if (this.content.values.map(_._1.hashCode).sum != this.hc) {
+      throw new RuntimeException("Hashcode mismatch")
+    }
+
+  private def checkToCheck() =
+    content.keys.foreach { adr => 
+      println(s"checking $adr")
+      val cls = ds.find(adr)
+      if (!adr.isInstanceOf[ClassicalAddress.PrimitiveAddress] && !in.contains(cls) && !toCheck.exists(k => ds.find(k) == cls)) {
+        throw new RuntimeException(s"Address $adr (SCC: $cls) has no incoming references and is not in $toCheck")
+      }
+    }
+
+  //checkNoEmptyRefs()
+  //checkToCheck()
+  //checkHashCode()
+  //checkContent()
+  //checkNotContainSelf()
+  //checkDS()
+  //checkOnlyRoots()
+  //checkIn()
+}
+
+object Differ {
+  def calcDiff[K,V](map1: Map[K,V], map2: Map[K,V]): Map[K,(Option[V],Option[V])] = {
     val allKeys = map1.keySet ++ map2.keySet
     allKeys.foldLeft(Map[K,(Option[V],Option[V])]()) {
       (acc, k) =>
@@ -379,17 +412,4 @@ extends Store[Addr,Abs] {
         }
     }
   }
-
-  private def checkHashCode() =
-    if (this.content.values.map(_._1.hashCode).sum != this.hc) {
-      throw new RuntimeException("Hashcode mismatch")
-    }
-
-  //checkNoEmptyRefs()
-  checkHashCode()
-  checkContent()
-  checkNotContainSelf()
-  checkDS()
-  checkOnlyRoots()
-  checkIn()
 }

@@ -63,8 +63,10 @@ object Store {
     val content = values.toMap.map({ case (k,v) => (k,(v,CountOne,JoinLattice[Abs].references(v))) })
     new RefCountingStoreVanilla[Addr,Abs](content, hc=values.map(_._2.hashCode).sum)
   }
-  def gcStore[Addr:Address,Abs:JoinLattice](values: Iterable[(Addr,Abs)]): GCStore[Addr,Abs] = new GCStore[Addr,Abs](values.toMap.mapValues(v => (v, CountOne)).toMap)
-  def gcStoreAlt[Addr:Address,Abs:JoinLattice](values: Iterable[(Addr,Abs)]): GCStoreAlt[Addr,Abs] = new GCStoreAlt[Addr,Abs](values.toMap.mapValues(v => (v, CountOne)).toMap)
+  def gcStore[Addr:Address,Abs:JoinLattice](values: Iterable[(Addr,Abs)]): GCStore[Addr,Abs] = 
+    new GCStore[Addr,Abs](values.toMap.mapValues(v => (v, CountOne)).toMap)
+  def gcStoreAlt[Addr:Address,Abs:JoinLattice](values: Iterable[(Addr,Abs)]): GCStoreAlt[Addr,Abs] = 
+    new GCStoreAlt[Addr,Abs](values.toMap.mapValues(v => (v, CountOne)).toMap)
 
   implicit def monoid[Addr : Address, Abs : JoinLattice]: Monoid[Store[Addr, Abs]] =
     new Monoid[Store[Addr, Abs]] {

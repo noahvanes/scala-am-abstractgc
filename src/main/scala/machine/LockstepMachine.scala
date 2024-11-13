@@ -5,91 +5,79 @@ class LockstepMachine[Exp : Expression, Abs : JoinLattice, Addr : Address, Time 
     val machineGC = new MachineAAMGC[Exp, Abs, Addr, Time]
     val machineRC = new MachineAAMARCplusplus[Exp, Abs, Addr, Time]
 
-    def equiv(s1: machineGC.State, s2: machineRC.State): Boolean = 
-        s1.control == s2.control
-
-    def project(s: machineGC.State): machineRC.State = {
-        machineRC.State(
+    def project(s: machineRC.State): machineGC.State = {
+        machineGC.State(
             project(s.control), 
-            project(s.store), 
-            project(s.kstore, s.a),
-            project(s.a), 
+            project(s.store),
+            project(s.kstore),
+            project(s.adr), 
             s.t
         )
     }
 
-    def project(c: machineGC.Control): machineRC.Control =
-        c match {
-            case machineGC.ControlEval(exp, env)       => machineRC.ControlEval(exp, env)
-            case machineGC.ControlKont(kon)            => machineRC.ControlKont(kon)
-            case machineGC.ControlCall(fn, fexp, args) => machineRC.ControlCall(fn, fexp, args)
-            case machineGC.ControlError(err)           => machineRC.ControlError(err)
+    def project(a: machineRC.KontAddr): machineGC.KontAddr = 
+        a match {
+            case machineRC.NormalKontAddress(exp, t)    => machineGC.NormalKontAddress(exp, t)
+            case machineRC.HaltKontAddress              => machineGC.HaltKontAddress
         }
-        
-    def project(sto: GCStore[Addr, Abs]): RefCountingStore[Addr, Abs] = {
-        val content = sto.content.map { case (adr, (vlu, cnt)) => (adr, (vlu, cnt, sto.refs(adr))) }
-        val hc = sto.content.values.map(_._1.hashCode).sum
-        val ds = Tarjan(content.keys, (adr:Addr) => content(adr)._3)
-        RefCountingStore(
-            content,
-            ???,        // in
-            ds,         // ds
-            ???,        // rootRefs
-            ???,        // toCheck
-            hc          // hc
-        )
-    }
 
-    def project(k: Kont[machineGC.KontAddr]): Kont[machineRC.KontAddr] = 
+    def project(sto: RefCountingStore[Addr, Abs]): GCStore[Addr, Abs] =
+        GCStore(sto.content.map({ case (a, (v,c,_)) => (a, (v,c)) }),
+                sto.content.map({ case (a, (_,_,r)) => (a, r) }))
+
+    def project(c: machineRC.Control): machineGC.Control =
+        c match {
+            case machineRC.ControlEval(exp, env)       => machineGC.ControlEval(exp, env)
+            case machineRC.ControlKont(kon)            => machineGC.ControlKont(kon)
+            case machineRC.ControlCall(fn, fexp, args) => machineGC.ControlCall(fn, fexp, args)
+            case machineRC.ControlError(err)           => machineGC.ControlError(err)
+        }
+
+    def project(k: Kont[machineRC.KontAddr]): Kont[machineGC.KontAddr] = 
         Kont(k.frame, project(k.next))
 
-    def project(kstore: GCKontStore[Addr, machineGC.KontAddr], root: machineGC.KontAddr): RefCountingKontStore[Addr, machineRC.KontAddr] = {
-        val content = kstore.content.foldLeft(Map[machineRC.KontAddr, (Set[Kont[machineRC.KontAddr]],Set[machineRC.KontAddr],Set[Addr])]()) {
-            case (acc, (k, v)) =>
-                acc + (project(k) -> ((v.map(project), kstore.refs(k).map(project), kstore.vrefs(k))))
+    def project(kstore: RefCountingKontStore[Addr, machineRC.KontAddr]): GCKontStore[Addr, machineGC.KontAddr] =
+        GCKontStore(kstore.content.map({ case (k,(v,_,_)) => (project(k), v.map(project)) }), 
+                    kstore.content.map({ case (k,(_,r,_)) => (project(k), r.map(project)) }).withDefaultValue(Set()),
+                    kstore.content.map({ case (k,(_,_,r)) => (project(k), r) }).withDefaultValue(Set()))
+
+    def initialState(exp: Exp, sem: Semantics[Exp,Abs,Addr,Time]) = {
+        val s0 = machineRC.State.inject(exp, Iterable.empty, sem.initialStore)
+        val s0_gcA = project(s0)
+        val s0_gcB = machineGC.State.inject(exp, Iterable.empty, sem.initialStore)
+        if (s0_gcA != s0_gcB) {
+            println()
+            println()
+            println(s0_gcA)
+            println()
+            println()
+            println(s0_gcB)
+            throw new RuntimeException(s"Initial states are not equal")
         }
-        val ds = Tarjan(content.keys, (adr: machineRC.KontAddr) => content(adr)._2)
-        val in = content.foldLeft(Map[machineRC.KontAddr, machineRC.KontAddr]()) {
-            case (acc, (k, (_,kaddrs,_))) => 
-                kaddrs.foldLeft(acc)((acc, kaddr) => acc + (ds.find(kaddr) -> k))
-        }
-        val hc = content.values.foldLeft(0)((acc, konts) => acc + konts._1.toList.map(_.hashCode).sum)
-        RefCountingKontStore(project(root), content, in, ds, hc)
+        s0
     }
 
-    def project(a: machineGC.KontAddr): machineRC.KontAddr = 
-        a match {
-            case machineGC.NormalKontAddress(exp, t) => machineRC.NormalKontAddress(exp, t)
-            case machineGC.HaltKontAddress           => machineRC.HaltKontAddress
-        } 
-
-    case class State(s1: machineGC.State, s2: machineRC.State) {
-        assert(equiv(s1, s2))
-        def step(sem: Semantics[Exp,Abs,Addr,Time]): Set[State] = {
-            val succs1 = s1.step(sem)
-            val succs2 = s2.step(sem)
-            assert(succs1.size == succs2.size) 
-            succs1.foldLeft(Set[State]()) { (acc, ss1) =>
-                ???
-            }
+    def step(st: machineRC.State, sem: Semantics[Exp,Abs,Addr,Time]) = {
+        val st_gc = project(st)
+        val succs = st.step(sem)
+        val succs_gcA = succs.map(project)
+        val succs_gcB = st_gc.step(sem)
+        if (succs_gcA != succs_gcB) {
+            println(st)
+            println(Differ.calcDiff(succs_gcA.head.store.content, succs_gcB.head.store.content))
+            throw new RuntimeException("Step is not the same")
         }
-        
-    }
-
-    object State {
-        def inject(exp: Exp, envBindings: Iterable[(String, Addr)], storeBindings: Iterable[(Addr, Abs)]): State =
-            State(machineGC.State.inject(exp, envBindings, storeBindings),
-                  machineRC.State.inject(exp, envBindings, storeBindings)) 
+        succs 
     }
 
     def compare(exp: Exp, sem: Semantics[Exp,Abs,Addr,Time]) = {
-        val s0 = State.inject(exp, Iterable.empty, sem.initialStore)
-        val worklist = scala.collection.mutable.Queue[State](s0)
-        val visited = scala.collection.mutable.Set[State]()
+        val s0 = initialState(exp, sem)
+        val worklist = scala.collection.mutable.Queue[machineRC.State](s0)
+        val visited = scala.collection.mutable.Set[machineRC.State]()
         while (!worklist.isEmpty) {
             val s = worklist.dequeue
             if (visited.add(s)) {
-                val succs = s.step(sem)
+                val succs = step(s, sem)
                 worklist ++= succs
             }  
         }

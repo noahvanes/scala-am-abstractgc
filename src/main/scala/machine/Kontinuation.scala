@@ -482,8 +482,12 @@ object KontStore {
     new RefCountingKontStore[Addr,KontAddr](root, content = Map(root->(Set(),Set(),Set())))
   def refCountStoreVanilla[Addr : Address, KontAddr : KontAddress](root: KontAddr): RefCountingKontStoreVanilla[Addr,KontAddr] =
     new RefCountingKontStoreVanilla[Addr,KontAddr](root, content = Map(root->(Set(),Set(),Set())))
-  def gcStore[Addr : Address, KontAddr : KontAddress]: GCKontStore[Addr,KontAddr] =
-    new GCKontStore[Addr,KontAddr](Map(), Map().withDefaultValue(Set()), Map().withDefaultValue(Set()))
-  def gcStoreAlt[Addr : Address, KontAddr : KontAddress]: GCKontStoreAlt[Addr,KontAddr] =
-    new GCKontStoreAlt[Addr,KontAddr](Map(), Map().withDefaultValue(Set()), Map().withDefaultValue(Set()))
+  def gcStore[Addr : Address, KontAddr : KontAddress](root: KontAddr): GCKontStore[Addr,KontAddr] =
+    new GCKontStore[Addr,KontAddr](Map(root->Set[Kont[KontAddr]]()), 
+                                   Map(root->Set[KontAddr]()).withDefaultValue(Set()), // TODO: remove default values?
+                                   Map(root->Set[Addr]()).withDefaultValue(Set()))
+  def gcStoreAlt[Addr : Address, KontAddr : KontAddress](root: KontAddr): GCKontStoreAlt[Addr,KontAddr] =
+    new GCKontStoreAlt[Addr,KontAddr](Map(root->Set[Kont[KontAddr]]()), 
+                                      Map(root->Set[KontAddr]()).withDefaultValue(Set()), 
+                                      Map(root->Set[Addr]()).withDefaultValue(Set()))
 }

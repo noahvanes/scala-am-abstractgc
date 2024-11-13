@@ -96,7 +96,11 @@ class MachineAAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : T
       case ControlEval(e, env) => integrate(a, sem.stepEval(e, env, store, t), sem)
       case ControlCall(fn,fexp,args) => integrate(a, sem.stepCall(fn,fexp,args,store,t), sem)
       case ControlKont(v) => kstore.lookup(a).toList.flatMap({
-        case Kont(frame, next) => integrate(next, sem.stepKont(v, frame, store, t), sem)
+        case Kont(frame, next) => 
+          val (kstore1, addrs) = kstore.collect(next)
+          val store1 = store.collect(control.references ++ sem.initialEnv.map(_._2) ++ addrs ++ frame.references)
+          val updatedState = this.copy(store = store1, kstore = kstore1)
+          updatedState.integrate(next, sem.stepKont(v, frame, store1, t), sem)
       })
       case ControlError(_) => List()
     }
@@ -122,7 +126,7 @@ class MachineAAMGC[Exp : Expression, Abs : JoinLattice, Addr : Address, Time : T
   object State {
     def inject(exp: Exp, env: Iterable[(String, Addr)], store: Iterable[(Addr, Abs)]) =
       State(ControlEval(exp, Environment.initial[Addr](env)),
-        Store.gcStore[Addr, Abs](store), KontStore.gcStore[Addr,KontAddr], HaltKontAddress, Timestamp[Time].initial(""))
+        Store.gcStore[Addr, Abs](store), KontStore.gcStore[Addr,KontAddr](HaltKontAddress), HaltKontAddress, Timestamp[Time].initial(""))
     import scala.language.implicitConversions
 
     implicit val graphNode = new GraphNode[State, Unit] {

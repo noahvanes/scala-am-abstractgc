@@ -86,28 +86,31 @@ class MachineAAMGCAlt[Exp : Expression, Abs : JoinLattice, Addr : Address, Time 
       case ControlEval(e, env) => integrate(a, sem.stepEval(e, env, store, t))
       case ControlCall(fn,fexp,args) => integrate(a, sem.stepCall(fn,fexp,args,store,t))
       case ControlKont(v) => kstore.lookup(a).toList.flatMap({
-        case Kont(frame, next) => integrate(next, sem.stepKont(v, frame, store, t))
+        case Kont(frame, next) => 
+          protectGC(next, frame.references ++ control.references ++ sem.initialEnv.map(_._2)) { st => 
+            st.integrate(next, sem.stepKont(v, frame, store, t))
+          } 
       })
       case ControlError(_) => List()
     }
 
-    def step(sem: Semantics[Exp, Abs, Addr, Time]): List[State] = {
+    private def protectGC[A](kroot: KontAddr, roots: Set[Addr])(bdy: State => A): A = {
       val store1 = store.copy(marked = true)
       val kstore1 = kstore.copy(marked = true)
       val current = this.copy(store = store1, kstore = kstore1)
       try {
-        current.successors(sem)
+        bdy(current)
       } catch {
         case _ : KontStoreJoinException | _ : StoreJoinException =>
-          current.collect(sem).successors(sem)
+          val (kstore2, addrs) = kstore1.collect(kroot)
+          val store2 = store1.collect(roots ++ addrs)
+          val stateGC = current.copy(store = store2, kstore = kstore2)
+          bdy(stateGC)
       }
     }
 
-    def collect(sem: Semantics[Exp,Abs,Addr,Time]): State = {
-      val (kstore1,addrs) = kstore.collect(a)
-      val store1 = store.collect(control.references ++ sem.initialEnv.map(_._2) ++ addrs)
-      this.copy(kstore = kstore1, store = store1)
-    }
+    def step(sem: Semantics[Exp, Abs, Addr, Time]): List[State] = 
+      protectGC(a, control.references ++ sem.initialEnv.map(_._2)) { st => st.successors(sem) }
 
     def stepAnalysis[L](analysis: Analysis[L, Exp, Abs, Addr, Time], current: L): L = ???
 
@@ -124,7 +127,7 @@ class MachineAAMGCAlt[Exp : Expression, Abs : JoinLattice, Addr : Address, Time 
   object State {
     def inject(exp: Exp, env: Iterable[(String, Addr)], store: Iterable[(Addr, Abs)]) =
       State(ControlEval(exp, Environment.initial[Addr](env)),
-        Store.gcStoreAlt[Addr, Abs](store), KontStore.gcStoreAlt[Addr,KontAddr], HaltKontAddress, Timestamp[Time].initial(""))
+        Store.gcStoreAlt[Addr, Abs](store), KontStore.gcStoreAlt[Addr,KontAddr](HaltKontAddress), HaltKontAddress, Timestamp[Time].initial(""))
     import scala.language.implicitConversions
 
     implicit val graphNode = new GraphNode[State, Unit] {
