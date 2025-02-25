@@ -24,13 +24,13 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
     currentIn + (a -> (counts + 1, refs))
   }
 
-  private def incEdgeRef(from: Addr, to: Addr, currentIn: AddrCount) = {
+  private def incEdgeRef(from: Addr, to: Addr, currentIn: AddrCount) = Main.timeGC {
       val (counts, refs) = currentIn(to)
       currentIn + (to -> (counts, refs + from))
   }
 
   def incRefs(addrs: Iterable[Addr]): RefCountingStoreVanilla[Addr,Abs] =
-    this.copy(in = addrs.foldLeft(in)((acc,ref) => incRootRef(ref,acc)))
+    Main.timeGC { this.copy(in = addrs.foldLeft(in)((acc,ref) => incRootRef(ref,acc))) }
 
   private def decRef(update: AddrRefs => AddrRefs, to: Addr, currentIn: AddrCount): (Boolean, AddrCount) = {
     val current = currentIn(to)
@@ -49,17 +49,21 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
      = decRef({ case (counts,refs) => (counts,refs-from) }, to, currentIn)
 
   private def decRootRefs(addrs: Iterable[Addr], currentIn: AddrCount, currentToCheck: Set[Addr]): (AddrCount, Set[Addr]) =
-    addrs.foldLeft((currentIn, currentToCheck)) { 
-        case ((accIn, accToCheck), addr) =>
-            val (isGarbage, accIn2) = decRootRef(addr, accIn)
-            (accIn2, if (isGarbage) (accToCheck + addr) else accToCheck)
+    Main.timeGC {
+      addrs.foldLeft((currentIn, currentToCheck)) { 
+          case ((accIn, accToCheck), addr) =>
+              val (isGarbage, accIn2) = decRootRef(addr, accIn)
+              (accIn2, if (isGarbage) (accToCheck + addr) else accToCheck)
+      }
     }
 
   private def decEdgeRefs(from: Addr, addrs: Iterable[Addr], currentIn: AddrCount, currentToCheck: Set[Addr]): (AddrCount, Set[Addr]) =
-    addrs.foldLeft((currentIn, currentToCheck)) { 
+    Main.timeGC {
+      addrs.foldLeft((currentIn, currentToCheck)) { 
         case ((accIn, accToCheck), addr) =>
             val (isGarbage, accIn2) = decEdgeRef(from, addr, accIn)
             (accIn2, if (isGarbage) (accToCheck + addr) else accToCheck)
+      }
     }
 
   def decRefs(addrs: Iterable[Addr]): RefCountingStoreVanilla[Addr,Abs] = {
@@ -67,7 +71,7 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
     this.copy(in = updatedIn, toCheck = updatedToCheck)
   }
 
-  def collect(): RefCountingStoreVanilla[Addr,Abs] = {
+  def collect(): RefCountingStoreVanilla[Addr,Abs] = Main.timeGC {
     var toDealloc       = toCheck.toList.filterNot(addr => in.contains(addr))
     var updatedContent  = this.content 
     var updatedIn       = this.in 

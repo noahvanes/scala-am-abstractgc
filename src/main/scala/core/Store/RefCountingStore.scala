@@ -35,7 +35,7 @@ extends Store[Addr,Abs] {
     currentIn + (cls -> (counts, refs + from))
   }
 
-  def incRefs(addrs: Iterable[Addr]): RefCountingStore[Addr,Abs] = {
+  def incRefs(addrs: Iterable[Addr]): RefCountingStore[Addr,Abs] = Main.timeGC {
     val (updatedIn, updatedRoots) = addrs.foldLeft((this.in, this.rootRefs)) {
       case ((accIn, accRefs), ref) => (incRootRef(ref, accIn, this.ds), accRefs + (ref -> (accRefs(ref) + 1))) 
     }
@@ -59,11 +59,13 @@ extends Store[Addr,Abs] {
     = decRef({ case (counts,refs) => (counts,refs-from) }, to, currentIn)
 
   private def decRootRefs(addrs: Iterable[Addr], currentIn: AddrCount, currentRoots: RootRefs, currentToCheck: Set[Addr]): (AddrCount, RootRefs, Set[Addr]) =
-    addrs.foldLeft((currentIn, currentRoots, currentToCheck)) { 
+    Main.timeGC { 
+      addrs.foldLeft((currentIn, currentRoots, currentToCheck)) { 
         case ((accIn, accRoots, accToCheck), addr) =>
             val cls = ds.find(addr)
             val (isGarbage, accIn2) = decRootRef(cls, accIn)
             (accIn2, remRootRef(addr, accRoots), if (isGarbage) (accToCheck + cls) else accToCheck)
+      }
     }
 
   private def decEdgeRefs(from: Addr, addrs: Iterable[Addr], currentIn: AddrCount, currentToCheck: Set[Addr]): (AddrCount, Set[Addr]) =
@@ -88,7 +90,7 @@ extends Store[Addr,Abs] {
     this.copy(in = updatedIn, rootRefs = updatedRoots, toCheck = updatedToCheck)
   }
 
-  def collect(): RefCountingStore[Addr,Abs] = {
+  def collect(): RefCountingStore[Addr,Abs] = Main.timeGC {
     var toDealloc       = toCheck.map(ds.find).filterNot(in.contains).toList 
     var updatedContent  = this.content 
     var updatedIn       = this.in 
@@ -121,7 +123,7 @@ extends Store[Addr,Abs] {
         val vrefs = JoinLattice[Abs].references(v)
         val updatedContent = this.content + (adr -> (v, CountOne, vrefs))
         val updatedIn = vrefs.foldLeft(this.in)((acc, ref) => {
-          if (ref == adr) { acc } else { incEdgeRef(adr, ref, acc, this.ds) }
+          if (ref == adr) { acc } else Main.timeGC { incEdgeRef(adr, ref, acc, this.ds) }
         })
         val updatedHc = this.hc + v.hashCode()
         this.copy(content = updatedContent, in = updatedIn, hc = updatedHc)
@@ -137,7 +139,7 @@ extends Store[Addr,Abs] {
         val updatedHc = this.hc - u.hashCode() + updatedVal.hashCode()
         val ((updatedDs, updatedIn), updatedRefs) = vrefs.foldLeft(((this.ds, this.in), urefs)) { 
           (acc, ref) =>
-            if (urefs.contains(ref)) { acc } else { (detectCycle(adr, ref, acc._1), acc._2 + ref) }
+            if (urefs.contains(ref)) { acc } else { (Main.timeGC { detectCycle(adr, ref, acc._1) }, acc._2 + ref) }
         }
         val updatedContent = this.content + (adr -> (updatedVal, CountInfinity, updatedRefs))
         RefCountingStore(updatedContent, updatedIn, updatedDs, rootRefs, toCheck, updatedHc)
@@ -151,67 +153,69 @@ extends Store[Addr,Abs] {
             val vrefs = JoinLattice[Abs].references(v)
             val updatedHc = this.hc - u.hashCode() + v.hashCode()
             val updatedContent = this.content + (adr -> (v, CountOne, vrefs))
-            val removedRefs = urefs -- vrefs 
-            val addedRefs   = vrefs -- urefs
-            // updating DS and IN
-            lazy val scc = ds.find(adr)
-            lazy val addrs = ds.allOf(scc).toSet
-            var updatedDs = this.ds
-            var updatedIn = this.in
-            var updatedToCheck = this.toCheck
-            // 1) removed references
-            val (internalRemRefs, externalRemRefs) = removedRefs.partition(updatedDs.find(_) == scc)
-            //// 1a) external
-            val updatedRem = decEdgeRefs(adr, externalRemRefs, updatedIn, updatedToCheck)
-            updatedIn      = updatedRem._1
-            updatedToCheck = updatedRem._2
-            //// 1b) check removed references inside the SCC
-            if (internalRemRefs.nonEmpty && addrs.size > 1) {
-              updatedDs = updatedDs -- addrs
-              updatedDs = Tarjan(addrs, ref => updatedContent(ref)._3.filter(addrs), updatedDs) 
-              if (updatedToCheck.contains(scc)) {
-                updatedToCheck -= scc
-                updatedToCheck ++= addrs.map(updatedDs.find)
-              }
-              // external refs ...
-              val (_, sccRefs) = updatedIn(scc)
-              updatedIn -= scc
-              sccRefs.foreach { ref =>   // ... from other addresses
-                updatedContent(ref)._3
-                                   .filter(addrs)
-                                   .foreach { a => updatedIn = incEdgeRef(ref, a, updatedIn, updatedDs) }
-              }
-              addrs.foreach { addr =>   // ... from the roots
-                rootRefs.get(addr).foreach { count => 
-                  updatedIn = incRootRef(addr, updatedIn, updatedDs, count)
+            Main.timeGC {
+              val removedRefs = urefs -- vrefs 
+              val addedRefs   = vrefs -- urefs
+              // updating DS and IN
+              lazy val scc = ds.find(adr)
+              lazy val addrs = ds.allOf(scc).toSet
+              var updatedDs = this.ds
+              var updatedIn = this.in
+              var updatedToCheck = this.toCheck
+              // 1) removed references
+              val (internalRemRefs, externalRemRefs) = removedRefs.partition(updatedDs.find(_) == scc)
+              //// 1a) external
+              val updatedRem = decEdgeRefs(adr, externalRemRefs, updatedIn, updatedToCheck)
+              updatedIn      = updatedRem._1
+              updatedToCheck = updatedRem._2
+              //// 1b) check removed references inside the SCC
+              if (internalRemRefs.nonEmpty && addrs.size > 1) {
+                updatedDs = updatedDs -- addrs
+                updatedDs = Tarjan(addrs, ref => updatedContent(ref)._3.filter(addrs), updatedDs) 
+                if (updatedToCheck.contains(scc)) {
+                  updatedToCheck -= scc
+                  updatedToCheck ++= addrs.map(updatedDs.find)
+                }
+                // external refs ...
+                val (_, sccRefs) = updatedIn(scc)
+                updatedIn -= scc
+                sccRefs.foreach { ref =>   // ... from other addresses
+                  updatedContent(ref)._3
+                                    .filter(addrs)
+                                    .foreach { a => updatedIn = incEdgeRef(ref, a, updatedIn, updatedDs) }
+                }
+                addrs.foreach { addr =>   // ... from the roots
+                  rootRefs.get(addr).foreach { count => 
+                    updatedIn = incRootRef(addr, updatedIn, updatedDs, count)
+                  }
+                }
+                // internal refs
+                addrs.foreach { addr =>
+                  val addrCls = updatedDs.find(addr)
+                  updatedContent(addr)._3.filter(addrs).filter(updatedDs.find(_) != addrCls).foreach { ref => 
+                    updatedIn = incEdgeRef(addr, ref, updatedIn, updatedDs)
+                  }
+                }
+                // remove addresses that end up with no references anymore
+                addrs.map(updatedDs.find).foreach { cls => 
+                  if (!updatedIn.contains(cls)) { updatedToCheck += cls }
                 }
               }
-              // internal refs
-              addrs.foreach { addr =>
-                val addrCls = updatedDs.find(addr)
-                updatedContent(addr)._3.filter(addrs).filter(updatedDs.find(_) != addrCls).foreach { ref => 
-                  updatedIn = incEdgeRef(addr, ref, updatedIn, updatedDs)
-                }
+              // 3) add new references 
+              addedRefs.foreach { to => 
+                val updatedAdd = detectCycle(adr, to, (updatedDs, updatedIn))
+                updatedDs      = updatedAdd._1
+                updatedIn      = updatedAdd._2  
               }
-              // remove addresses that end up with no references anymore
-              addrs.map(updatedDs.find).foreach { cls => 
-                if (!updatedIn.contains(cls)) { updatedToCheck += cls }
-              }
+              RefCountingStore(updatedContent, updatedIn, updatedDs, rootRefs, updatedToCheck, updatedHc)
             }
-            // 3) add new references 
-            addedRefs.foreach { to => 
-              val updatedAdd = detectCycle(adr, to, (updatedDs, updatedIn))
-              updatedDs      = updatedAdd._1
-              updatedIn      = updatedAdd._2  
-            }
-            RefCountingStore(updatedContent, updatedIn, updatedDs, rootRefs, updatedToCheck, updatedHc)
         case Some((u, _, urefs)) => // WEAK UPDATE
             val vrefs = JoinLattice[Abs].references(v)
             val updatedVal = JoinLattice[Abs].join(u, v)
             val updatedHc = this.hc - u.hashCode() + updatedVal.hashCode()
             val ((updatedDs, updatedIn), updatedRefs) = vrefs.foldLeft(((this.ds, this.in), urefs)) { 
               (acc, ref) =>
-                if (urefs.contains(ref)) { acc } else { (detectCycle(adr, ref, acc._1), acc._2 + ref) }
+                if (urefs.contains(ref)) { acc } else { (Main.timeGC { detectCycle(adr, ref, acc._1) }, acc._2 + ref) }
             }
             val updatedContent = this.content + (adr -> (updatedVal, CountInfinity, updatedRefs))
             RefCountingStore(updatedContent, updatedIn, updatedDs, rootRefs, toCheck, updatedHc) 

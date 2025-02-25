@@ -64,7 +64,7 @@ case class GCKontStore[Addr : Address, KontAddr : KontAddress](content: Map[Kont
       if (acc._1.contains(ref)) { acc } else { mark(ref,acc._1,acc._2) }
     })
 
-  def collect(root: KontAddr): (GCKontStore[Addr,KontAddr],Set[Addr]) = {
+  def collect(root: KontAddr): (GCKontStore[Addr,KontAddr],Set[Addr]) = Main.timeGC {
     val (marked, addrs) = mark(root, Set(), Set())
     val updatedContent = content.filterKeysStrict(marked)
     val updatedRefs = refs.filterKeysStrict(marked).withDefaultValue(Set())
@@ -112,7 +112,7 @@ case class GCKontStoreAlt[Addr : Address, KontAddr : KontAddress](content: Map[K
       if (acc._1.contains(ref)) { acc } else { mark(ref,acc._1,acc._2) }
     })
 
-  def collect(root: KontAddr): (GCKontStoreAlt[Addr,KontAddr],Set[Addr]) = {
+  def collect(root: KontAddr): (GCKontStoreAlt[Addr,KontAddr],Set[Addr]) = Main.timeGC {
     val (marked, addrs) = mark(root, Set(), Set())
     val updatedContent = content.filterKeysStrict(marked)
     val updatedRefs = refs.filterKeysStrict(marked).withDefaultValue(Set())
@@ -163,7 +163,7 @@ case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress]
    hc: Int = 0)
   extends KontStore[KontAddr] {
 
-  def pop(newRoot: KontAddr): (RefCountingKontStore[Addr,KontAddr],Iterable[Addr]) = {
+  def pop(newRoot: KontAddr): (RefCountingKontStore[Addr,KontAddr],Iterable[Addr]) = Main.timeGC {
     if (ds.equiv(root, newRoot)) {
       (this.copy(root = newRoot), Iterable.empty)
     } else {
@@ -206,7 +206,7 @@ case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress]
       case None =>
         val kontRefs = kont.frame.references
         val updatedContent = content + (adr -> (Set(kont), Set(kont.next), kontRefs))
-        val updatedIn = in + (ds.find(kont.next) -> adr)
+        val updatedIn = Main.timeGC { in + (ds.find(kont.next) -> adr) }
         val updatedHC = hc + kont.hashCode()
         val updatedKstore = this.copy(root = adr, content = updatedContent, in = updatedIn, hc = updatedHC)
         (updatedKstore, kontRefs)
@@ -217,7 +217,7 @@ case class RefCountingKontStore[Addr : Address, KontAddr : KontAddress]
         val (updatedIn, updatedKaddrs, updatedDS) = if (kaddrs.contains(kont.next)) {
           (in, kaddrs, ds)
         } else {
-          val updatedDS = detectCycle(adr, ds)
+          val updatedDS = Main.timeGC { detectCycle(adr, ds) }
           val updatedIn = in - updatedDS.find(adr)
           val updatedKaddrs = kaddrs + kont.next
           (updatedIn, updatedKaddrs, updatedDS)
@@ -370,7 +370,7 @@ case class RefCountingKontStoreVanilla[Addr : Address, KontAddr : KontAddress]
     succs.foldLeft(currentIn)((acc,ref) => deallocRef(addr,ref,newRoot,acc,toDealloc))
   }
 
-  def pop(newRoot: KontAddr): (RefCountingKontStoreVanilla[Addr,KontAddr],Iterable[Addr]) = {
+  def pop(newRoot: KontAddr): (RefCountingKontStoreVanilla[Addr,KontAddr],Iterable[Addr]) = Main.timeGC {
     val toDelete = scala.collection.mutable.Queue[KontAddr]()
     val toDealloc = scala.collection.mutable.Queue[KontAddr]()
     if (in(root).isEmpty && root != newRoot) {
@@ -397,7 +397,7 @@ case class RefCountingKontStoreVanilla[Addr : Address, KontAddr : KontAddress]
       case None =>
         val kontRefs = kont.frame.references
         val updatedContent = content + (adr -> (Set(kont), Set(kont.next), kontRefs))
-        val updatedIn = in + (kont.next -> (in(kont.next) + adr))
+        val updatedIn = Main.timeGC { in + (kont.next -> (in(kont.next) + adr)) }
         val updatedHC = hc + kont.hashCode()
         val updatedKstore = this.copy(root = adr, content = updatedContent, in = updatedIn, hc = updatedHC)
         (updatedKstore, kontRefs)
@@ -408,7 +408,7 @@ case class RefCountingKontStoreVanilla[Addr : Address, KontAddr : KontAddress]
         val (updatedIn, updatedKaddrs) = if (kaddrs.contains(kont.next)) {
           (in, kaddrs)
         } else {
-          val updatedIn = in + (kont.next -> (in(kont.next) + adr))
+          val updatedIn = Main.timeGC { in + (kont.next -> (in(kont.next) + adr)) }
           val updatedKaddrs = kaddrs + kont.next
           (updatedIn, updatedKaddrs)
         }

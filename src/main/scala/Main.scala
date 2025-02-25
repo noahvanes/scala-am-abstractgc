@@ -14,16 +14,16 @@ object Main {
   /* -- CONFIGURATION -- */
 
   // configure output options for benchmarks
-  private val OUTPUT_FILE   = "main-benchmarks"       // the name of the output file (which will be exported in CSV format)
+  private val OUTPUT_FILE   = "overhead-benchmarks"   // the name of the output file (which will be exported in CSV format)
   private val OUTPUT_GRAPH  = None                    // by default, no graph is generated
   // private val OUTPUT_GRAPH  = Some("graph-name")   // uncomment to generate an output graph (automatically exported as a dot-file to output/<graph-name>.dot)
                                                       // (NOTE: to avoid the impact of graph construction on performance, the graph will be generated after the actual benchmark measurements)
 
   // configure benchmark parameters
-  private val MAX_WARMUP_RUNS    = 100      // maximum number of warmup runs per benchmark program
-  private val MAX_WARMUP_TIME    = 120      // maximum total time spent on warmup (in seconds) per benchmark program
+  private val MAX_WARMUP_RUNS    = 30     // maximum number of warmup runs per benchmark program
+  private val MAX_WARMUP_TIME    = 60     // maximum total time spent on warmup (in seconds) per benchmark program
   private val NUMBER_OF_TRIALS   = 30     // number of trials/measurements per benchmark program
-  private val MAX_TIME_PER_TRIAL = 1800    // timeout per trial (in seconds)
+  private val MAX_TIME_PER_TRIAL = 60     // timeout per trial (in seconds)
                                           // NOTE: as memory usage increases throughout a trial, higher values of MAX_TIME_PER_TRIAL might cause out-of-memory exceptions
 
   // congifure context-sensitivity of the analysis
@@ -40,31 +40,31 @@ object Main {
 
   // configure which abstract interpreters / machines to compare in the benchmarks
   private val ABSTRACT_MACHINES = List(
-    machineAAM,                 // uncomment to include an abstract interpreter without abstract GC (i.e., \rightarrow in the paper)
-    machineAAMGC,                // uncomment to include an abstract interpreter with abstract tracing GC at every step (i.e., \rightarrow_{\Gamma} in the paper)
-    machineAAMGCAlt,            // uncomment to include an abstract interpreter which performs abstract tracing GC at every join operation in the store (i.e., \rightarrow_{\GammaCFA} in the paper)
-    machineAAMARC,             // uncomment to include an abstract interpreter which performs abstract reference counting without cycle detection (i.e., \rightarrow_{arc} in the paper)
+  //  machineAAM,                 // uncomment to include an abstract interpreter without abstract GC (i.e., \rightarrow in the paper)
+  //  machineAAMGC,               // uncomment to include an abstract interpreter with abstract tracing GC at every step (i.e., \rightarrow_{\Gamma} in the paper)
+  //  machineAAMGCAlt,            // uncomment to include an abstract interpreter which performs abstract tracing GC at every join operation in the store (i.e., \rightarrow_{\GammaCFA} in the paper)
+    machineAAMARC,              // uncomment to include an abstract interpreter which performs abstract reference counting without cycle detection (i.e., \rightarrow_{arc} in the paper)
     machineAAMARCplus,          // uncomment to include an abstract interpreter which performs abstract reference counting with only cycle detection in the kontinuation store (i.e., \rightarrow_{arc+} in the paper)
-    machineAAMARCplusplus        // the abstract interpreter which performs abstract reference counting with full cycle detection (i.e., \rightarrow_{arc++} in the paper)
+    machineAAMARCplusplus         // the abstract interpreter which performs abstract reference counting with full cycle detection (i.e., \rightarrow_{arc++} in the paper)
   )
 
   // configure which benchmarks to run (uncomment to include; using the same names as in the paper)
   private val BENCHMARK_PROGRAMS = List(
-    cpstak,
-    diviter,
-    divrec,
-    destruc,
-    triangl,
-    puzzle,
-    takl,
-    browse,
-    boyer,
-    deriv,
-    dderiv,
-    collatz,
-    gcipd,
-    primtest,
-    rsa,
+    // cpstak,
+    // diviter,
+    // divrec,
+    // destruc,
+    // triangl,
+    // puzzle,
+    // takl,
+    // browse,
+    // boyer,
+    // deriv,
+    // dderiv,
+    // collatz,
+    // gcipd,
+    // primtest,
+    // rsa,
     nqueens
   )
 
@@ -75,16 +75,16 @@ object Main {
   private def kCFA(k: Int) = KCFA(k)
 
   // lattice definitions
-  private def typeLattice: SchemeLattice                  = new MakeSchemeLattice[Type.S, Concrete.B, Type.I, Type.F, Type.C, Type.Sym](true)
-  private def constantPropagationLattice: SchemeLattice   = new MakeSchemeLattice[ConstantPropagation.S, Concrete.B, ConstantPropagation.I, ConstantPropagation.F, ConstantPropagation.C, ConstantPropagation.Sym](true)
+  private def typeLattice: SchemeLattice                  = new MakeSchemeLattice[Type.S, Concrete.B, Type.I, Type.F, Type.C, Type.Sym](false)
+  private def constantPropagationLattice: SchemeLattice   = new MakeSchemeLattice[ConstantPropagation.S, Concrete.B, ConstantPropagation.I, ConstantPropagation.F, ConstantPropagation.C, ConstantPropagation.Sym](false)
   private def kPointsToLattice(k: Int): SchemeLattice = {
     val kpts = new KPointsTo(k)
-    new MakeSchemeLattice[kpts.S, Concrete.B, kpts.I, kpts.F, kpts.C, kpts.S](true)
+    new MakeSchemeLattice[kpts.S, Concrete.B, kpts.I, kpts.F, kpts.C, kpts.S](false)
   }
-  private def concreteLattice: SchemeLattice              = new MakeSchemeLattice[Concrete.S, Concrete.B, Concrete.I, Concrete.F, Concrete.C, Concrete.Sym](true)
+  private def concreteLattice: SchemeLattice              = new MakeSchemeLattice[Concrete.S, Concrete.B, Concrete.I, Concrete.F, Concrete.C, Concrete.Sym](false)
   private def boundedIntegerLattice(bound: Int): SchemeLattice = {
     val bounded = new BoundedInteger(bound)
-    new MakeSchemeLattice[Type.S, Concrete.B, bounded.I, Type.F, Type.C, Type.Sym](true)
+    new MakeSchemeLattice[Type.S, Concrete.B, bounded.I, Type.F, Type.C, Type.Sym](false)
   }
 
   // machine definitions
@@ -123,6 +123,20 @@ object Main {
 
   /* -- BENCHMARKING -- */
 
+  // used to register time spent on GC
+  private var GC_TIME: Long = 0
+  private var TIMER_ACTIVE: Boolean = false 
+  def timeGC[A](block: => A): A = {
+    assert(!TIMER_ACTIVE)
+    TIMER_ACTIVE = true 
+    val t0 = System.nanoTime()
+    val res = block
+    val t1 = System.nanoTime()
+    TIMER_ACTIVE = false 
+    Main.GC_TIME = Main.GC_TIME + (t1 - t0)
+    res
+  }
+
   // auxiliary definitions
   private type Machine = AbstractMachine[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
   private implicit def isSchemeLattice: IsSchemeLattice[ABSTRACT_DOMAIN.L] = ABSTRACT_DOMAIN.isSchemeLattice
@@ -146,7 +160,7 @@ object Main {
   }
 
   // format for benchmark results
-  case class BenchmarkResult(id: String, numberOfStates: Long, time: Option[Long])
+  case class BenchmarkResult(id: String, mean: Double, stddev: Double)
 
   // benchmarking function
   private def runBenchmark(benchmark: Benchmark, machine: Machine): BenchmarkResult = {
@@ -158,26 +172,18 @@ object Main {
     val warmupTimeout = Timeout.start(Duration(MAX_WARMUP_TIME,"seconds"))
     while (warmupRun < MAX_WARMUP_RUNS && !warmupTimeout.reached) {
       print(".")
+      GC_TIME = 0
       machine.eval(program,sem,false,warmupTimeout)
       warmupRun = warmupRun + 1
     }
     // actual measurements
     var trial = 0
-    var numberOfStates = 0
-    var measurements = List[Long]()
+    var overheads = List[Double]()
     while (trial < NUMBER_OF_TRIALS) {
       print("*")
-      val t0 = System.nanoTime()
+      GC_TIME = 0
       val result = machine.eval(program,sem,false,Timeout.start(Duration(MAX_TIME_PER_TRIAL,"seconds")))
-      val t1 = System.nanoTime()
-      val elapsed = (t1 - t0) / 1000000   // convert ns into ms
-
-      if (result.timedOut) {      // assumption: if a benchmark times out once, it will timeout again
-        println(s"\n=> TIMEOUT | STATES: ${result.numberOfStates}")
-        return BenchmarkResult(name,result.numberOfStates,None)
-      }
-      measurements = elapsed :: measurements
-      numberOfStates = result.numberOfStates
+      overheads = (GC_TIME:Double)/(result.numberOfStates:Double) :: overheads
       trial = trial + 1
     }
     // optional: export a state graph
@@ -185,10 +191,11 @@ object Main {
       val result = machine.eval(program,sem,true,Timeout.start(Duration(MAX_TIME_PER_TRIAL,"seconds")))
       result.toFile(s"$OUTPUT_DIR/${OUTPUT_GRAPH.get}-$name.dot")(GraphDOTOutput)
     }
-    // benchmark result
-    val mean = measurements.sum / measurements.size
-    println(s"\n=> TIME: $mean | STATES: $numberOfStates")
-    BenchmarkResult(name,numberOfStates,Some(mean))
+    // compute the benchmark result
+    val mean = (overheads.sum:Double) / (overheads.size:Double)
+    val stddev = Math.sqrt((overheads.map(r=>Math.pow(r-mean,2)).sum:Double)/((overheads.size-1):Double))
+    println(s"\n=> MEAN: $mean | STDDEV: $stddev")
+    BenchmarkResult(name,mean,stddev)
   }
 
   private def runBenchmarks(benchmarks: List[Benchmark], machines: List[Machine]): List[BenchmarkResult]
@@ -198,12 +205,9 @@ object Main {
     val outputPath = s"$OUTPUT_DIR/$filename.csv"
     val outputFile = new BufferedWriter(new FileWriter(outputPath))
     val csvWriter = new CSVWriter(outputFile)
-    var csvContents = List(Array("benchmark", "numberOfStates", "time"))
+    var csvContents = List(Array("benchmark", "mean", "std"))
     results foreach { result =>
-      val name = result.id
-      val numberOfStates = result.numberOfStates.toString
-      val time = if (result.time.isDefined) { result.time.get.toString } else { "timeout" }
-      csvContents = Array(name, numberOfStates, time) :: csvContents
+      csvContents = Array(result.id, result.mean.toString, result.stddev.toString) :: csvContents
     }
     csvWriter.writeAll(csvContents.reverse)
     csvWriter.close()
@@ -212,13 +216,5 @@ object Main {
   def main(args: Array[String]): Unit = {
     val results = runBenchmarks(BENCHMARK_PROGRAMS, ABSTRACT_MACHINES)
     exportCSV(results, OUTPUT_FILE)
-  }
-
-  def debug(args: Array[String]): Unit = {
-    val benchmark = destruc
-    println(s">> RUNNING BENCHMARK ${benchmark.name}")
-    val program = benchmark.loadSchemeProgram()
-    val machine = new LockstepMachine[SchemeExp,ABSTRACT_DOMAIN.L,ClassicalAddress.A,CONTEXT_SENSITIVITY.T]
-    machine.compare(program, sem)
   }
 }

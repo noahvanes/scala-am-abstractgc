@@ -45,7 +45,7 @@ case class GCStoreAlt[Addr : Address, Abs : JoinLattice]
     GCStoreAlt(updatedContent,updatedRefs,false)
   }
 
-  def collect(roots: Set[Addr]): GCStoreAlt[Addr,Abs] = {
+  def collect(roots: Set[Addr]): GCStoreAlt[Addr,Abs] = Main.timeGC {
     val marked = roots.foldLeft(Set[Addr]())((acc, ref) => mark(ref, acc))
     sweep(marked)
   }
