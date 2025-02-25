@@ -161,7 +161,7 @@ extends Store[Addr,Abs] {
             var updatedToCheck = this.toCheck
             // 1) removed references
             val (internalRemRefs, externalRemRefs) = removedRefs.partition(updatedDs.find(_) == scc)
-            //// 1a) internal
+            //// 1a) external
             val updatedRem = decEdgeRefs(adr, externalRemRefs, updatedIn, updatedToCheck)
             updatedIn      = updatedRem._1
             updatedToCheck = updatedRem._2
