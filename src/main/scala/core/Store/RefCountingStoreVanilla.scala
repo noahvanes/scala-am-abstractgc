@@ -24,7 +24,7 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
     currentIn + (a -> (counts + 1, refs))
   }
 
-  private def incEdgeRef(from: Addr, to: Addr, currentIn: AddrCount) = Main.timeGC {
+  private def incEdgeRef(from: Addr, to: Addr, currentIn: AddrCount) = {
       val (counts, refs) = currentIn(to)
       currentIn + (to -> (counts, refs + from))
   }
@@ -49,24 +49,20 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
      = decRef({ case (counts,refs) => (counts,refs-from) }, to, currentIn)
 
   private def decRootRefs(addrs: Iterable[Addr], currentIn: AddrCount, currentToCheck: Set[Addr]): (AddrCount, Set[Addr]) =
-    Main.timeGC {
       addrs.foldLeft((currentIn, currentToCheck)) { 
           case ((accIn, accToCheck), addr) =>
               val (isGarbage, accIn2) = decRootRef(addr, accIn)
               (accIn2, if (isGarbage) (accToCheck + addr) else accToCheck)
       }
-    }
 
   private def decEdgeRefs(from: Addr, addrs: Iterable[Addr], currentIn: AddrCount, currentToCheck: Set[Addr]): (AddrCount, Set[Addr]) =
-    Main.timeGC {
-      addrs.foldLeft((currentIn, currentToCheck)) { 
-        case ((accIn, accToCheck), addr) =>
-            val (isGarbage, accIn2) = decEdgeRef(from, addr, accIn)
-            (accIn2, if (isGarbage) (accToCheck + addr) else accToCheck)
-      }
+    addrs.foldLeft((currentIn, currentToCheck)) { 
+      case ((accIn, accToCheck), addr) =>
+          val (isGarbage, accIn2) = decEdgeRef(from, addr, accIn)
+          (accIn2, if (isGarbage) (accToCheck + addr) else accToCheck)
     }
 
-  def decRefs(addrs: Iterable[Addr]): RefCountingStoreVanilla[Addr,Abs] = {
+  def decRefs(addrs: Iterable[Addr]): RefCountingStoreVanilla[Addr,Abs] = Main.timeGC {
     val (updatedIn, updatedToCheck) = decRootRefs(addrs, this.in, this.toCheck)
     this.copy(in = updatedIn, toCheck = updatedToCheck)
   }
@@ -96,7 +92,7 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
         case None =>
             val vrefs = JoinLattice[Abs].references(v)
             val updatedContent = this.content + (adr -> (v, CountOne, vrefs))
-            val updatedIn = vrefs.foldLeft(this.in)((acc, ref) => incEdgeRef(adr, ref, acc))
+            val updatedIn = Main.timeGC { vrefs.foldLeft(this.in)((acc, ref) => incEdgeRef(adr, ref, acc)) } 
             val updatedHc = this.hc + v.hashCode()
             this.copy(content = updatedContent, in = updatedIn, hc = updatedHc)
         case Some((u, count, urefs)) if JoinLattice[Abs].subsumes(u, v) =>
@@ -110,7 +106,7 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
             val updatedVal = JoinLattice[Abs].join(u, v)
             val updatedHc = this.hc - u.hashCode() + updatedVal.hashCode()
             val (updatedIn, updatedRefs) = vrefs.foldLeft((this.in, urefs))((acc, ref) => {
-                if (urefs.contains(ref)) { acc } else { (incEdgeRef(adr, ref, acc._1), acc._2 + ref) }
+                if (urefs.contains(ref)) { acc } else { (Main.timeGC { incEdgeRef(adr, ref, acc._1) }, acc._2 + ref) }
             })
             val updatedContent = this.content + (adr -> (updatedVal, CountInfinity, updatedRefs))
             this.copy(content = updatedContent, in = updatedIn, hc = updatedHc)
@@ -123,10 +119,10 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
         case Some((u, CountOne, urefs)) => // STRONG UPDATE
             val vrefs = JoinLattice[Abs].references(v)
             val updatedHc = this.hc - u.hashCode() + v.hashCode()
-            val (updatedIn, updatedToCheck) = decEdgeRefs(adr, urefs -- vrefs, this.in, this.toCheck)
+            val (updatedIn, updatedToCheck) = Main.timeGC { decEdgeRefs(adr, urefs -- vrefs, this.in, this.toCheck) } 
             val updatedIn2 = vrefs.foldLeft(updatedIn) { (acc, ref) => 
-                if (urefs.contains(ref)) { acc } else { incEdgeRef(adr, ref, acc) }    
-            }
+                if (urefs.contains(ref)) { acc } else Main.timeGC { incEdgeRef(adr, ref, acc) }    
+            } 
             val updatedContent = this.content + (adr -> (v, CountOne, vrefs))
             this.copy(content = updatedContent, in = updatedIn2, toCheck = updatedToCheck, hc = updatedHc)
         case Some((u, _, urefs)) => // WEAK UPDATE
@@ -134,7 +130,7 @@ case class RefCountingStoreVanilla[Addr:Address, Abs:JoinLattice]
             val updatedVal = JoinLattice[Abs].join(u, v)
             val updatedHc = this.hc - u.hashCode() + updatedVal.hashCode()
             val (updatedIn, updatedRefs) = vrefs.foldLeft((this.in, urefs))((acc, ref) => {
-                if (urefs.contains(ref)) { acc } else { (incEdgeRef(adr, ref, acc._1), acc._2 + ref) }
+                if (urefs.contains(ref)) { acc } else { (Main.timeGC { incEdgeRef(adr, ref, acc._1) }, acc._2 + ref) }
             })
             val updatedContent = this.content + (adr -> (updatedVal, CountInfinity, updatedRefs))
             this.copy(content = updatedContent, in = updatedIn, hc = updatedHc)    

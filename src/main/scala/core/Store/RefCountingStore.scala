@@ -59,14 +59,12 @@ extends Store[Addr,Abs] {
     = decRef({ case (counts,refs) => (counts,refs-from) }, to, currentIn)
 
   private def decRootRefs(addrs: Iterable[Addr], currentIn: AddrCount, currentRoots: RootRefs, currentToCheck: Set[Addr]): (AddrCount, RootRefs, Set[Addr]) =
-    Main.timeGC { 
       addrs.foldLeft((currentIn, currentRoots, currentToCheck)) { 
         case ((accIn, accRoots, accToCheck), addr) =>
             val cls = ds.find(addr)
             val (isGarbage, accIn2) = decRootRef(cls, accIn)
             (accIn2, remRootRef(addr, accRoots), if (isGarbage) (accToCheck + cls) else accToCheck)
       }
-    }
 
   private def decEdgeRefs(from: Addr, addrs: Iterable[Addr], currentIn: AddrCount, currentToCheck: Set[Addr]): (AddrCount, Set[Addr]) =
     addrs.foldLeft((currentIn, currentToCheck)) { 
@@ -85,7 +83,7 @@ extends Store[Addr,Abs] {
     }
   }
 
-  def decRefs(addrs: Iterable[Addr]): RefCountingStore[Addr,Abs] = {
+  def decRefs(addrs: Iterable[Addr]): RefCountingStore[Addr,Abs] = Main.timeGC {
     val (updatedIn, updatedRoots, updatedToCheck) = decRootRefs(addrs, this.in, this.rootRefs, this.toCheck)
     this.copy(in = updatedIn, rootRefs = updatedRoots, toCheck = updatedToCheck)
   }
